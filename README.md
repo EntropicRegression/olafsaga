@@ -46,7 +46,9 @@ npm run build
 
 ## 正式部署
 
-完整步驟見 [部署手冊](docs/DEPLOYMENT.md)。先複製 `.env.example` 的所有值到 Vercel，再依序部署：
+給雲端資源負責人的申請內容、交付欄位和驗收標準，見 [雲端資源開通與交付規格](docs/RESOURCE-HANDOFF.md)。
+
+部署者的工具安裝及完整操作步驟，見 [部署執行與工具安裝手冊](docs/DEPLOYMENT.md)。先複製 `.env.example` 的所有值到 Vercel，再依序部署：
 
 1. Firebase Authentication、Firestore、Storage 與安全規則。
 2. Cloud Run emotion2vec service 和 WAV export job。
