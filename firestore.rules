@@ -1,0 +1,13 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The browser never reads or writes study records directly. All access goes
+    // through authenticated Next.js routes using the Firebase Admin SDK.
+    // This prevents participants from enumerating another student's records and
+    // prevents researchers' annotations from mutating immutable raw evidence.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,23 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /audio/{uid}/{sessionId}/{fileName} {
+      allow create: if request.auth != null
+                    && request.auth.uid == uid
+                    && fileName.matches('^[A-Za-z0-9_-]+\\.wav$')
+                    && request.resource.size > 44
+                    && request.resource.size <= 2 * 1024 * 1024
+                    && request.resource.contentType == 'audio/wav';
+      allow read, update, delete: if false;
+    }
+
+    match /exports/{path=**} {
+      allow read, write: if false;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

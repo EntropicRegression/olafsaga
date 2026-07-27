@@ -1,0 +1,12 @@
+{
+  "framework": "nextjs",
+  "regions": ["hnd1"],
+  "functions": {
+    "app/api/attempts/*/complete/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/admin/export/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
