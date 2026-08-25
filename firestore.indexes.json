@@ -1,15 +1,19 @@
 {
-  "indexes": [
+  "indexes": [],
+  "fieldOverrides": [
     {
       "collectionGroup": "attempts",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
+      "fieldPath": "updatedAt",
+      "indexes": [
         {
-          "fieldPath": "updatedAt",
-          "order": "DESCENDING"
+          "order": "ASCENDING",
+          "queryScope": "COLLECTION_GROUP"
+        },
+        {
+          "order": "DESCENDING",
+          "queryScope": "COLLECTION_GROUP"
         }
       ]
     }
-  ],
-  "fieldOverrides": []
+  ]
 }
