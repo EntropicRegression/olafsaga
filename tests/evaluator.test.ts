@@ -7,7 +7,9 @@ import type {
   AttemptInput,
   NodeId,
   RoundType,
+  StudyThresholds,
 } from "@/lib/study/types";
+import { STUDY_THRESHOLDS, resolveStudyThresholds } from "@/lib/study/config";
 
 function input(
   transcript: string,
@@ -160,5 +162,30 @@ describe("study decision engine", () => {
     expect(result.forcedAdvance).toBe(false);
     expect(result.nextNodeId).toBe(1);
     expect(result.nextRound).toBe("plot");
+  });
+
+  it("uses the threshold snapshot locked to the study session", () => {
+    const stricter: StudyThresholds = {
+      ...STUDY_THRESHOLDS,
+      minimumWordCount: 20,
+      maximumAttempts: 2,
+    };
+    const result = evaluateAttempt(
+      input(validAnswers[1].plot, { attemptNumber: 2 }),
+      {},
+      stricter,
+    );
+    expect(result.decision).toBe("TOO_SHORT");
+    expect(result.status).toBe("forced_advance");
+  });
+
+  it("falls back safely when an older session has no threshold snapshot", () => {
+    expect(resolveStudyThresholds(undefined)).toEqual(STUDY_THRESHOLDS);
+    expect(
+      resolveStudyThresholds({
+        ...STUDY_THRESHOLDS,
+        accuracy: 72,
+      }).accuracy,
+    ).toBe(72);
   });
 });

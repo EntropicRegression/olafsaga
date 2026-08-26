@@ -4,8 +4,8 @@ import { randomInt } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminBucket, adminDb } from "@/lib/firebase/admin";
 import {
-  STUDY_CONFIG_VERSION,
   getNode,
+  resolveStudyThresholds,
 } from "@/lib/study/config";
 import { getOpeningMessages } from "@/lib/study/templates";
 import type {
@@ -18,7 +18,7 @@ import type {
 } from "@/lib/study/types";
 import type { Principal } from "./auth";
 import { AuthError } from "./auth";
-import { getActiveVocabularyVersion } from "./study-config";
+import { getActiveStudyConfig } from "./study-config";
 
 const now = () => new Date().toISOString();
 
@@ -50,6 +50,7 @@ function toSession(id: string, data: FirebaseFirestore.DocumentData): StudySessi
       : undefined,
     configVersion: String(data.configVersion),
     vocabularyVersion: String(data.vocabularyVersion),
+    thresholds: resolveStudyThresholds(data.thresholds),
     startedAt: String(data.startedAt),
     updatedAt: String(data.updatedAt),
   };
@@ -114,7 +115,7 @@ export async function getOrCreateSession(
     throw new AuthError("Research consent is required.", 403);
   }
   const group = await assignGroup(principal);
-  const vocabularyVersion = await getActiveVocabularyVersion();
+  const activeConfig = await getActiveStudyConfig();
   const db = adminDb();
   const participantRef = db.collection("participants").doc(principal.uid);
 
@@ -141,8 +142,9 @@ export async function getOrCreateSession(
     round: "plot",
     attemptNumber: 1,
     status: "active",
-    configVersion: STUDY_CONFIG_VERSION,
-    vocabularyVersion,
+    configVersion: activeConfig.configVersion,
+    vocabularyVersion: activeConfig.vocabularyVersion,
+    thresholds: activeConfig.thresholds,
     startedAt,
     updatedAt: startedAt,
   };
@@ -209,6 +211,7 @@ export async function createAttempt(
     storagePath,
     configVersion: session.configVersion,
     vocabularyVersion: session.vocabularyVersion,
+    thresholds: session.thresholds,
     createdAt: now(),
     updatedAt: now(),
   });

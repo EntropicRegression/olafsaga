@@ -2,6 +2,7 @@
 
 import {
   STUDY_CONFIG_VERSION,
+  STUDY_THRESHOLDS,
   VOCABULARY_VERSION,
   getNode,
 } from "@/lib/study/config";
@@ -76,6 +77,7 @@ export function createDemoState(code: string): DemoStudyState {
     status: "active",
     configVersion: STUDY_CONFIG_VERSION,
     vocabularyVersion: VOCABULARY_VERSION,
+    thresholds: STUDY_THRESHOLDS,
     startedAt: createdAt,
     updatedAt: createdAt,
   };
@@ -147,7 +149,7 @@ export function submitDemoAttempt(
     state.session.group === "agent2"
       ? makeDemoEmotionEvaluation(state.session.nodeId, emotionPassed)
       : null;
-  const result = evaluateAttempt(attemptInput, { emotion });
+  const result = evaluateAttempt(attemptInput, { emotion }, state.session.thresholds);
   const timestamp = new Date().toISOString();
   const currentNode = state.session.nodeId;
   const currentRound = state.session.round;

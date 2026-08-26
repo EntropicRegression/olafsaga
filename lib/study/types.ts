@@ -123,6 +123,7 @@ export interface StudySession {
   awaitingWorksheetNodeId?: NodeId;
   configVersion: string;
   vocabularyVersion: string;
+  thresholds: StudyThresholds;
   startedAt: string;
   updatedAt: string;
 }

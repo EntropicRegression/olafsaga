@@ -17,6 +17,7 @@ import type {
   NodeId,
   RoundType,
   SemanticEvaluation,
+  StudyThresholds,
 } from "./types";
 
 export interface ProviderEvaluations {
@@ -58,6 +59,7 @@ function determineDecision(
   semantic: SemanticEvaluation,
   emotion: EmotionEvaluation | null,
   wordCount: number,
+  thresholds: StudyThresholds,
 ): DecisionCode {
   if (input.technicalError) return "TECHNICAL_ERROR";
   if (
@@ -69,17 +71,17 @@ function determineDecision(
   }
   if (!semantic.grammarUnderstandable) return "GRAMMAR_UNCLEAR";
   if (!semantic.relevant || !semantic.contentComplete) return "OFF_TOPIC";
-  if (wordCount < STUDY_THRESHOLDS.minimumWordCount) return "TOO_SHORT";
+  if (wordCount < thresholds.minimumWordCount) return "TOO_SHORT";
 
   if (
     input.speechScores.accuracy !== null &&
-    input.speechScores.accuracy < STUDY_THRESHOLDS.accuracy
+    input.speechScores.accuracy < thresholds.accuracy
   ) {
     return "LOW_ACCURACY";
   }
   if (
     input.speechScores.fluency !== null &&
-    input.speechScores.fluency < STUDY_THRESHOLDS.fluency
+    input.speechScores.fluency < thresholds.fluency
   ) {
     return "LOW_FLUENCY";
   }
@@ -97,6 +99,7 @@ function determineDecision(
 export function evaluateAttempt(
   input: AttemptInput,
   providers: ProviderEvaluations = {},
+  thresholds: StudyThresholds = STUDY_THRESHOLDS,
 ): AttemptResult {
   const wordCount = countEnglishWords(input.transcript);
   const semantic =
@@ -104,12 +107,18 @@ export function evaluateAttempt(
     deterministicSemanticEvaluation(input.transcript, input.nodeId, input.round);
   const emotion =
     input.group === "agent2" ? (providers.emotion ?? null) : null;
-  const decision = determineDecision(input, semantic, emotion, wordCount);
+  const decision = determineDecision(
+    input,
+    semantic,
+    emotion,
+    wordCount,
+    thresholds,
+  );
   const isTechnical = decision === "TECHNICAL_ERROR";
   const shouldForceAdvance =
     !isTechnical &&
     decision !== "PASS" &&
-    input.attemptNumber >= STUDY_THRESHOLDS.maximumAttempts;
+    input.attemptNumber >= thresholds.maximumAttempts;
   const progression =
     decision === "PASS" || shouldForceAdvance
       ? getNextStep(input.nodeId, input.round)

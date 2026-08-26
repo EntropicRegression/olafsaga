@@ -119,13 +119,13 @@ export function StudentExperience() {
   const [online, setOnline] = useState(true);
   const [pendingUploads, setPendingUploads] = useState(0);
 
-  const recorder = useAudioRecorder({
-    maximumSeconds: 30,
-    demoCode: code,
-  });
-
   const activeState = demoState ?? formalState;
   const session = activeState?.session;
+  const recordingLimit = session?.thresholds.maximumRecordingSeconds ?? 30;
+  const recorder = useAudioRecorder({
+    maximumSeconds: recordingLimit,
+    demoCode: code,
+  });
   const messages = activeState?.messages ?? [];
   const worksheet = useMemo(
     () => activeState?.worksheet ?? [],
@@ -528,10 +528,10 @@ export function StudentExperience() {
   }, [recorder, submitCaptured]);
 
   useEffect(() => {
-    if (recorder.isRecording && recorder.elapsedSeconds >= 30) {
+    if (recorder.isRecording && recorder.elapsedSeconds >= recordingLimit) {
       void stopRecording();
     }
-  }, [recorder.elapsedSeconds, recorder.isRecording, stopRecording]);
+  }, [recorder.elapsedSeconds, recorder.isRecording, recordingLimit, stopRecording]);
 
   const runSample = useCallback(
     async (

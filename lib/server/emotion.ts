@@ -2,7 +2,11 @@ import "server-only";
 
 import { z } from "zod";
 import { getNode, STUDY_THRESHOLDS } from "@/lib/study/config";
-import type { EmotionEvaluation, NodeId } from "@/lib/study/types";
+import type {
+  EmotionEvaluation,
+  NodeId,
+  StudyThresholds,
+} from "@/lib/study/types";
 import { getGoogleAuth } from "./google-auth";
 
 const responseSchema = z.object({
@@ -37,6 +41,7 @@ async function authorizationHeader(url: string): Promise<string | undefined> {
 export async function evaluateEmotionWithProvider(
   storagePath: string,
   nodeId: NodeId,
+  thresholds: StudyThresholds = STUDY_THRESHOLDS,
 ): Promise<EmotionEvaluation> {
   const baseUrl = process.env.EMOTION_SERVICE_URL?.replace(/\/$/, "");
   if (!baseUrl) throw new Error("The emotion2vec service is not configured.");
@@ -65,8 +70,8 @@ export async function evaluateEmotionWithProvider(
   const targetScore = targetIndex >= 0 ? sorted[targetIndex].score : 0;
   const passed =
     targetRank !== null &&
-    targetRank <= STUDY_THRESHOLDS.emotionMaximumRank &&
-    targetScore >= STUDY_THRESHOLDS.emotionMinimumScore;
+    targetRank <= thresholds.emotionMaximumRank &&
+    targetScore >= thresholds.emotionMinimumScore;
 
   return {
     scores: sorted,

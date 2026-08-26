@@ -28,9 +28,10 @@ import {
   X,
 } from "lucide-react";
 import { Brand } from "./brand";
+import { ParticipantCreator } from "./participant-creator";
+import { ResearchSettings } from "./research-settings";
 import { apiFetch } from "@/lib/client/api";
 import { isFirebaseConfigured, signOutParticipant } from "@/lib/firebase/client";
-import { STUDY_THRESHOLDS } from "@/lib/study/config";
 
 const isDemoMode =
   process.env.NEXT_PUBLIC_DEMO_MODE === "true" || !isFirebaseConfigured;
@@ -153,7 +154,6 @@ function formatTime(value: unknown) {
 export function ResearchDashboard() {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement | null>(null);
-  const vocabularyInput = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [activeNav, setActiveNav] = useState<
     "overview" | "sessions" | "participants" | "settings"
@@ -664,114 +664,69 @@ export function ResearchDashboard() {
           )}
 
           {activeNav === "participants" && (
-            <section className="admin-grid admin-grid--participants">
-              <article className="admin-card upload-card">
-                <div className="upload-icon">
-                  <FileUp size={26} />
-                </div>
-                <h2>批次匯入受試者</h2>
-                <p>
-                  CSV 欄位：code、password、classId、consentVersion、consentedAt。
-                  分組會在首次開始場次時由伺服器鎖定。
-                </p>
-                <input
-                  ref={fileInput}
-                  type="file"
-                  accept=".csv,text/csv"
-                  hidden
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void importCsv(file);
-                  }}
-                />
-                <button
-                  className="primary-button"
-                  onClick={() => fileInput.current?.click()}
-                >
-                  <FileUp size={17} />
-                  選擇 CSV
-                </button>
-              </article>
-              <article className="admin-card participant-list">
-                <CardHeading
-                  title="已建立帳號"
-                  subtitle={`${overview.participants.length} 筆顯示中`}
-                  icon={<Users size={18} />}
-                />
-                {overview.participants.map((participant) => (
-                  <div key={String(participant.id)}>
-                    <span>{String(participant.code).slice(-2)}</span>
-                    <div>
-                      <strong>{String(participant.code)}</strong>
-                      <small>{String(participant.classId)}</small>
-                    </div>
-                    <b>{String(participant.group ?? "待分派")}</b>
+            <section className="participant-workspace">
+              <ParticipantCreator
+                demo={isDemoMode}
+                onCreated={load}
+                onNotice={setNotice}
+              />
+              <div className="participant-side-stack">
+                <article className="admin-card upload-card upload-card--compact">
+                  <div className="upload-icon"><FileUp size={24} /></div>
+                  <div>
+                    <span className="section-kicker">BATCH IMPORT</span>
+                    <h2>批次匯入受試者</h2>
+                    <p>
+                      CSV 欄位：code、password、classId、consentVersion、consentedAt。
+                      適合一次建立多個帳號。
+                    </p>
                   </div>
-                ))}
-              </article>
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    accept=".csv,text/csv"
+                    hidden
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) void importCsv(file);
+                      event.currentTarget.value = "";
+                    }}
+                  />
+                  <button className="secondary-button" onClick={() => fileInput.current?.click()}>
+                    <FileUp size={17} />
+                    選擇 CSV
+                  </button>
+                </article>
+                <article className="admin-card participant-list">
+                  <CardHeading
+                    title="已建立帳號"
+                    subtitle={`${overview.participants.length} 筆顯示中`}
+                    icon={<Users size={18} />}
+                  />
+                  {overview.participants.length === 0 && (
+                    <p className="empty-state">尚未建立學生帳號。</p>
+                  )}
+                  {overview.participants.map((participant) => (
+                    <div key={String(participant.id)}>
+                      <span>{String(participant.code).slice(-2)}</span>
+                      <div>
+                        <strong>{String(participant.code)}</strong>
+                        <small>{String(participant.classId)}</small>
+                      </div>
+                      <b>{String(participant.group ?? "待分派")}</b>
+                    </div>
+                  ))}
+                </article>
+              </div>
             </section>
           )}
 
           {activeNav === "settings" && (
-            <section className="admin-grid">
-              <article className="admin-card settings-card">
-                <CardHeading
-                  title="原型判定門檻"
-                  subtitle="正式變更時建立新設定版本"
-                  icon={<Settings2 size={18} />}
-                />
-                {[
-                  ["每輪最低英文詞數", STUDY_THRESHOLDS.minimumWordCount],
-                  ["Accuracy", STUDY_THRESHOLDS.accuracy],
-                  ["Fluency", STUDY_THRESHOLDS.fluency],
-                  ["emotion2vec 信心值", STUDY_THRESHOLDS.emotionMinimumScore],
-                  ["每輪有效嘗試上限", STUDY_THRESHOLDS.maximumAttempts],
-                  ["錄音秒數上限", STUDY_THRESHOLDS.maximumRecordingSeconds],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                  </div>
-                ))}
-                <input
-                  ref={vocabularyInput}
-                  type="file"
-                  accept=".csv,.txt,text/csv,text/plain"
-                  hidden
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) void importVocabulary(file);
-                  }}
-                />
-                <button
-                  className="secondary-button settings-import"
-                  onClick={() => vocabularyInput.current?.click()}
-                >
-                  <FileUp size={16} />
-                  匯入並發布 1200 單字
-                </button>
-              </article>
-              <article className="admin-card settings-card">
-                <CardHeading
-                  title="服務狀態"
-                  subtitle="部署環境與模型版本"
-                  icon={<CloudCog size={18} />}
-                />
-                {[
-                  ["Application", isDemoMode ? "Demo mode" : "Vercel"],
-                  ["Structured data", isDemoMode ? "Browser" : "Firestore"],
-                  ["Speech", isDemoMode ? "Browser fallback" : "Azure Speech"],
-                  ["Semantic model", "gpt-5-mini"],
-                  ["Emotion model", "emotion2vec+ base"],
-                  ["Vocabulary", "prototype-core-v1"],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <span>{label}</span>
-                    <strong>{value}</strong>
-                  </div>
-                ))}
-              </article>
-            </section>
+            <ResearchSettings
+              demo={isDemoMode}
+              onNotice={setNotice}
+              onImportVocabulary={importVocabulary}
+            />
           )}
         </div>
       </section>
