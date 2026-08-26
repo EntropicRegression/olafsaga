@@ -333,6 +333,7 @@ export async function finalizeAttempt(
 
     const session = toSession(sessionSnap.id, sessionSnap.data()!);
     const sessionPatch: Record<string, unknown> = { updatedAt: timestamp };
+    const { toneHint, ...persistedResult } = result;
 
     if (result.status === "technical_error") {
       // Technical failures never advance or consume a student attempt.
@@ -375,7 +376,8 @@ export async function finalizeAttempt(
       attemptRef,
       {
         ...input,
-        ...result,
+        ...persistedResult,
+        ...(toneHint ? { toneHint } : {}),
         semantic: result.semantic,
         emotion: result.emotion,
         updatedAt: timestamp,

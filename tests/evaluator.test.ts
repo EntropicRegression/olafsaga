@@ -162,6 +162,7 @@ describe("study decision engine", () => {
     expect(result.forcedAdvance).toBe(false);
     expect(result.nextNodeId).toBe(1);
     expect(result.nextRound).toBe("plot");
+    expect(Object.hasOwn(result, "toneHint")).toBe(false);
   });
 
   it("uses the threshold snapshot locked to the study session", () => {

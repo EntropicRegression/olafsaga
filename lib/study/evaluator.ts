@@ -151,7 +151,7 @@ export function evaluateAttempt(
     emotion,
     replyTemplateId: reply.id,
     reply: reply.text,
-    toneHint: reply.toneHint,
+    ...(reply.toneHint ? { toneHint: reply.toneHint } : {}),
     forcedAdvance: shouldForceAdvance,
     ...progression,
   };

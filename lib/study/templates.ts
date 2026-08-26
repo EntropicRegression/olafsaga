@@ -104,8 +104,9 @@ export function getPrompt(nodeId: NodeId, round: RoundType): ReplyTemplate {
     id: `node_${nodeId}_${round}_prompt`,
     text: round === "plot" ? node.plotPrompt : node.feelingPrompt,
     kind: "standard",
-    toneHint:
-      round === "feeling" ? `${node.targetEmotion} voice` : undefined,
+    ...(round === "feeling"
+      ? { toneHint: `${node.targetEmotion} voice` }
+      : {}),
   };
 }
 
