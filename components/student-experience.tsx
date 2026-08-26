@@ -99,6 +99,13 @@ function message(
   };
 }
 
+function formatClock(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const seconds = safeSeconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
 export function StudentExperience() {
   const router = useRouter();
   const scrollAnchor = useRef<HTMLDivElement | null>(null);
@@ -121,7 +128,8 @@ export function StudentExperience() {
 
   const activeState = demoState ?? formalState;
   const session = activeState?.session;
-  const recordingLimit = session?.thresholds.maximumRecordingSeconds ?? 30;
+  const recordingLimit = session?.thresholds?.maximumRecordingSeconds ?? 30;
+  const attemptLimit = session?.thresholds?.maximumAttempts ?? 3;
   const recorder = useAudioRecorder({
     maximumSeconds: recordingLimit,
     demoCode: code,
@@ -861,7 +869,7 @@ export function StudentExperience() {
 
               <div className="record-controls">
                 <span className="record-time">
-                  00:{String(recorder.elapsedSeconds).padStart(2, "0")} / 00:30
+                  {formatClock(recorder.elapsedSeconds)} / {formatClock(recordingLimit)}
                 </span>
                 <button
                   className={`mic-button ${recorder.isRecording ? "is-recording" : ""}`}
@@ -880,7 +888,7 @@ export function StudentExperience() {
                   {recorder.isRecording ? <Square size={24} /> : <Mic size={27} />}
                 </button>
                 <span className="attempt-label">
-                  ATTEMPT {session.attemptNumber} / 3
+                  ATTEMPT {session.attemptNumber} / {attemptLimit}
                 </span>
               </div>
             </div>
