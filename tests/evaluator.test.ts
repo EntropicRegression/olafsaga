@@ -156,6 +156,7 @@ describe("study decision engine", () => {
       input("", {
         attemptNumber: 3,
         technicalError: "Speech provider timed out.",
+        technicalErrorCode: "SPEECH_SERVICE_UNAVAILABLE",
       }),
     );
     expect(result.status).toBe("technical_error");
@@ -163,6 +164,8 @@ describe("study decision engine", () => {
     expect(result.nextNodeId).toBe(1);
     expect(result.nextRound).toBe("plot");
     expect(Object.hasOwn(result, "toneHint")).toBe(false);
+    expect(result.technicalFailure?.stage).toBe("speech");
+    expect(result.replyTemplateId).toBe("technical_error_speech");
   });
 
   it("uses the threshold snapshot locked to the study session", () => {

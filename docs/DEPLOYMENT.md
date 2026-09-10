@@ -936,6 +936,21 @@ ANNA-002,ChangeMe456!,class-a,consent-2026-v1,2026-07-28
 | iPad 沒有麥克風 | 非 HTTPS、Safari 權限被拒絕、其他 App 佔用 | 檢查網址與 iPad 網站設定 |
 | Vercel build 顯示 Node 不支援 | Node.js 版本過舊 | Vercel Project Settings 改 22 以上 |
 
+研究後台的逐輪資料會顯示以下技術代碼；學生端只會看到不含秘密的處理提示：
+
+| 技術代碼 | 優先檢查 |
+|---|---|
+| `SPEECH_NOT_CONFIGURED` | `AZURE_SPEECH_KEY` 是否存在，新增後是否已 Redeploy |
+| `SPEECH_AUTH_FAILED` | Speech Key 與 `AZURE_SPEECH_REGION` 是否來自同一個 Speech resource |
+| `SEMANTIC_NOT_CONFIGURED` | `AZURE_OPENAI_ENDPOINT`、`AZURE_OPENAI_API_KEY`、`AZURE_OPENAI_DEPLOYMENT` 是否全部存在 |
+| `SEMANTIC_AUTH_FAILED` | OpenAI Key 是否過期，以及是否與 Endpoint 同一資源 |
+| `SEMANTIC_DEPLOYMENT_NOT_FOUND` | Endpoint、Deployment name、API version 與模型是否相容 |
+| `EMOTION_NOT_CONFIGURED` | `EMOTION_SERVICE_URL` 是否為 Cloud Run Service 根網址 |
+| `EMOTION_AUTH_FAILED` | Vercel Service Account 是否有 `roles/run.invoker`，或固定 Bearer token 是否正確 |
+| `AUDIO_UPLOAD_FAILED` | Firebase Storage bucket、Blaze、Storage rules 與使用者網路 |
+
+供應商分析錯誤不會刪除瀏覽器裡的待同步 WAV；同一筆 attempt 會自動重試，修正環境變數或權限後不需要請學生重新錄音。
+
 查看紀錄的位置：
 
 - Vercel：Project → Logs

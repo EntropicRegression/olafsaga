@@ -19,6 +19,7 @@ import type {
 import type { Principal } from "./auth";
 import { AuthError } from "./auth";
 import { getActiveStudyConfig } from "./study-config";
+import type { TechnicalFailure } from "@/lib/study/technical-failure";
 
 const now = () => new Date().toISOString();
 
@@ -293,6 +294,36 @@ export async function markAttemptAnalyzing(
         transcript: input.transcript,
         durationMs: input.durationMs,
         speechScores: input.speechScores,
+        technicalError: FieldValue.delete(),
+        technicalErrorCode: FieldValue.delete(),
+        technicalFailure: FieldValue.delete(),
+        updatedAt: now(),
+      },
+      { merge: true },
+    );
+}
+
+export async function markAttemptTechnicalFailure(
+  sessionId: string,
+  attemptId: string,
+  input: AttemptInput,
+  failure: TechnicalFailure,
+  technicalDetail: string,
+): Promise<void> {
+  await adminDb()
+    .collection("sessions")
+    .doc(sessionId)
+    .collection("attempts")
+    .doc(attemptId)
+    .set(
+      {
+        status: "technical_error",
+        transcript: input.transcript,
+        durationMs: input.durationMs,
+        speechScores: input.speechScores,
+        technicalError: technicalDetail,
+        technicalErrorCode: failure.code,
+        technicalFailure: failure,
         updatedAt: now(),
       },
       { merge: true },
@@ -326,7 +357,8 @@ export async function finalizeAttempt(
       existingStatus === "passed" ||
       existingStatus === "failed" ||
       existingStatus === "forced_advance" ||
-      existingStatus === "technical_error"
+      (existingStatus === "technical_error" &&
+        attemptSnap.data()?.technicalFailure?.retryable !== true)
     ) {
       return toSession(sessionSnap.id, sessionSnap.data()!);
     }

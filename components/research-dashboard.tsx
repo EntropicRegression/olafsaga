@@ -32,9 +32,18 @@ import { ParticipantCreator } from "./participant-creator";
 import { ResearchSettings } from "./research-settings";
 import { apiFetch } from "@/lib/client/api";
 import { isFirebaseConfigured, signOutParticipant } from "@/lib/firebase/client";
+import { isTechnicalFailureCode, getTechnicalFailure } from "@/lib/study/technical-failure";
 
 const isDemoMode =
   process.env.NEXT_PUBLIC_DEMO_MODE === "true" || !isFirebaseConfigured;
+
+function attemptDecisionLabel(attempt: Record<string, unknown>): string {
+  if (attempt.status !== "technical_error") return String(attempt.decision);
+  const code = attempt.technicalErrorCode;
+  return isTechnicalFailureCode(code)
+    ? getTechnicalFailure(code).label
+    : "系統分析錯誤";
+}
 
 interface Overview {
   metrics: {
@@ -1002,10 +1011,25 @@ function SessionDrawer({
                       {String(attempt.round).toUpperCase()}
                     </span>
                     <strong className={String(attempt.status)}>
-                      {String(attempt.decision)}
+                      {attemptDecisionLabel(attempt)}
                     </strong>
                   </div>
                   <p>{String(attempt.transcript || "(No transcript)")}</p>
+                  {attempt.status === "technical_error" && (
+                    <div className="attempt-technical-error">
+                      <b>
+                        {isTechnicalFailureCode(attempt.technicalErrorCode)
+                          ? getTechnicalFailure(attempt.technicalErrorCode).userMessage
+                          : "系統分析失敗，請查看下方技術資訊。"}
+                      </b>
+                      <span>
+                        {String(attempt.technicalErrorCode ?? "ANALYSIS_FAILED")}
+                        {attempt.technicalError
+                          ? ` · ${String(attempt.technicalError)}`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
                   <div className="attempt-scores">
                     <span>Words <b>{String(attempt.wordCount ?? "—")}</b></span>
                     <span>Accuracy <b>{String(scores.accuracy ?? "—")}</b></span>

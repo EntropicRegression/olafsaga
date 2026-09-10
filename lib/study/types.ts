@@ -1,3 +1,5 @@
+import type { TechnicalFailure, TechnicalFailureCode } from "./technical-failure";
+
 export type ExperimentGroup = "agent1" | "agent2";
 export type RoundType = "plot" | "feeling";
 export type NodeId = 1 | 2 | 3 | 4 | 5;
@@ -74,6 +76,7 @@ export interface AttemptInput {
   audioPath?: string;
   speechScores: SpeechScores;
   technicalError?: string;
+  technicalErrorCode?: TechnicalFailureCode;
 }
 
 export interface AttemptResult {
@@ -89,6 +92,7 @@ export interface AttemptResult {
   nextNodeId: NodeId | null;
   nextRound: RoundType | null;
   worksheetReady: boolean;
+  technicalFailure?: TechnicalFailure;
 }
 
 export interface ChatMessage {

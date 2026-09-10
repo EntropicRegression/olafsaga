@@ -8,6 +8,7 @@ import {
   resamplePcm,
 } from "@/lib/audio/wav";
 import type { SpeechScores } from "@/lib/study/types";
+import { TechnicalFailureError } from "@/lib/study/technical-failure";
 
 interface RecordingResult {
   wav: Blob;
@@ -42,6 +43,7 @@ export function useAudioRecorder(
   options: {
     maximumSeconds?: number;
     demoCode?: string;
+    requireAzureSpeech?: boolean;
     onAutoStop?: () => void;
   } = {},
 ) {
@@ -144,8 +146,15 @@ export function useAudioRecorder(
           setInterimTranscript,
           options.demoCode,
         );
-      } catch {
+      } catch (error) {
         azure.current = null;
+        if (options.requireAzureSpeech) throw error;
+      }
+      if (!azure.current && options.requireAzureSpeech) {
+        throw new TechnicalFailureError(
+          "SPEECH_NOT_CONFIGURED",
+          "Azure Speech did not return a recognition token.",
+        );
       }
       if (!azure.current) startBrowserFallback();
 

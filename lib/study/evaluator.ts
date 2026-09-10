@@ -19,6 +19,7 @@ import type {
   SemanticEvaluation,
   StudyThresholds,
 } from "./types";
+import { getTechnicalFailure } from "./technical-failure";
 
 export interface ProviderEvaluations {
   semantic?: SemanticEvaluation;
@@ -135,6 +136,7 @@ export function evaluateAttempt(
         input.round,
         input.attemptNumber,
         input.group,
+        input.technicalErrorCode,
       );
 
   return {
@@ -154,6 +156,13 @@ export function evaluateAttempt(
     ...(reply.toneHint ? { toneHint: reply.toneHint } : {}),
     forcedAdvance: shouldForceAdvance,
     ...progression,
+    ...(isTechnical
+      ? {
+          technicalFailure: getTechnicalFailure(
+            input.technicalErrorCode ?? "ANALYSIS_FAILED",
+          ),
+        }
+      : {}),
   };
 }
 

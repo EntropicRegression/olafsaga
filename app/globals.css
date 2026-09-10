@@ -2912,6 +2912,30 @@ input:focus-visible {
   background: #e4f5ef;
 }
 
+.attempt-timeline__top > strong.technical_error {
+  color: #9c4d3d;
+  background: #fae9e5;
+}
+
+.attempt-technical-error {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0;
+  padding: 9px;
+  color: #87483d;
+  border: 1px solid #f0cbc3;
+  border-radius: 8px;
+  background: #fff4f1;
+  font-size: 0.58rem;
+  line-height: 1.5;
+}
+
+.attempt-technical-error span {
+  color: #a2665b;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
 .attempt-timeline p {
   margin: 10px 0;
   color: #344f63;

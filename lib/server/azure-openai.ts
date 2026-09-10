@@ -2,12 +2,12 @@ import "server-only";
 
 import { z } from "zod";
 import { getNode } from "@/lib/study/config";
-import { deterministicSemanticEvaluation } from "@/lib/study/semantic";
 import type {
   NodeId,
   RoundType,
   SemanticEvaluation,
 } from "@/lib/study/types";
+import { TechnicalFailureError } from "@/lib/study/technical-failure";
 
 const semanticSchema = z.object({
   language: z.enum(["en", "zh", "unknown"]),
@@ -66,7 +66,10 @@ export async function evaluateSemanticWithProvider(
   round: RoundType,
 ): Promise<SemanticEvaluation> {
   if (!isAzureOpenAIConfigured()) {
-    return deterministicSemanticEvaluation(transcript, nodeId, round);
+    throw new TechnicalFailureError(
+      "SEMANTIC_NOT_CONFIGURED",
+      "One or more Azure OpenAI environment variables are missing.",
+    );
   }
 
   const node = getNode(nodeId);
@@ -149,32 +152,65 @@ export async function evaluateSemanticWithProvider(
         },
         max_completion_tokens: 500,
       };
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "api-key": process.env.AZURE_OPENAI_API_KEY!,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(12_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "api-key": process.env.AZURE_OPENAI_API_KEY!,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch (error) {
+    const timedOut =
+      error instanceof Error &&
+      (error.name === "AbortError" || error.name === "TimeoutError");
+    throw new TechnicalFailureError(
+      timedOut ? "SEMANTIC_TIMEOUT" : "SEMANTIC_SERVICE_UNAVAILABLE",
+      error instanceof Error ? error.message : "Azure OpenAI fetch failed.",
+      { cause: error },
+    );
+  }
 
   if (!response.ok) {
-    throw new Error(`Azure OpenAI returned ${response.status}.`);
+    const code =
+      response.status === 401 || response.status === 403
+        ? "SEMANTIC_AUTH_FAILED"
+        : response.status === 404 || response.status === 400
+          ? "SEMANTIC_DEPLOYMENT_NOT_FOUND"
+          : response.status === 429
+            ? "SEMANTIC_RATE_LIMITED"
+            : response.status === 408 || response.status === 504
+              ? "SEMANTIC_TIMEOUT"
+              : "SEMANTIC_SERVICE_UNAVAILABLE";
+    throw new TechnicalFailureError(
+      code,
+      `Azure OpenAI returned HTTP ${response.status}.`,
+    );
   }
-  const payload = (await response.json()) as {
-    output_text?: string;
-    output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const content = isResponsesEndpoint(url)
-    ? extractResponsesText(payload)
-    : payload.choices?.[0]?.message?.content;
-  if (!content) throw new Error("Azure OpenAI returned an empty evaluation.");
-  const parsed = semanticSchema.parse(JSON.parse(content));
-  return {
-    ...parsed,
-    source: "azure-openai",
-    modelVersion: process.env.AZURE_OPENAI_DEPLOYMENT!,
-  };
+  try {
+    const payload = (await response.json()) as {
+      output_text?: string;
+      output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = isResponsesEndpoint(url)
+      ? extractResponsesText(payload)
+      : payload.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Azure OpenAI returned an empty evaluation.");
+    const parsed = semanticSchema.parse(JSON.parse(content));
+    return {
+      ...parsed,
+      source: "azure-openai",
+      modelVersion: process.env.AZURE_OPENAI_DEPLOYMENT!,
+    };
+  } catch (error) {
+    throw new TechnicalFailureError(
+      "SEMANTIC_INVALID_RESPONSE",
+      error instanceof Error ? error.message : "Azure OpenAI response was invalid.",
+      { cause: error },
+    );
+  }
 }

@@ -19,6 +19,33 @@ afterEach(() => {
 });
 
 describe("Azure OpenAI semantic evaluation", () => {
+  it("reports missing credentials as a configuration failure", async () => {
+    vi.stubEnv("AZURE_OPENAI_ENDPOINT", "");
+    vi.stubEnv("AZURE_OPENAI_API_KEY", "");
+    vi.stubEnv("AZURE_OPENAI_DEPLOYMENT", "");
+
+    await expect(
+      evaluateSemanticWithProvider("Elsa removed her glove.", 1, "plot"),
+    ).rejects.toMatchObject({
+      failure: { code: "SEMANTIC_NOT_CONFIGURED", stage: "semantic" },
+    });
+  });
+
+  it("distinguishes an invalid key from other provider failures", async () => {
+    vi.stubEnv("AZURE_OPENAI_ENDPOINT", "https://example.openai.azure.com");
+    vi.stubEnv("AZURE_OPENAI_API_KEY", "expired-key");
+    vi.stubEnv("AZURE_OPENAI_DEPLOYMENT", "gpt-5-mini");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("Unauthorized", { status: 401 }),
+    );
+
+    await expect(
+      evaluateSemanticWithProvider("Elsa removed her glove.", 1, "plot"),
+    ).rejects.toMatchObject({
+      failure: { code: "SEMANTIC_AUTH_FAILED", stage: "semantic" },
+    });
+  });
+
   it("uses a configured Foundry Responses endpoint", async () => {
     vi.stubEnv(
       "AZURE_OPENAI_ENDPOINT",

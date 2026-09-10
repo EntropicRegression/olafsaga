@@ -60,6 +60,11 @@ import type {
   StudySession,
   WorksheetEntry,
 } from "@/lib/study/types";
+import {
+  failureFromError,
+  TechnicalFailureError,
+  type TechnicalFailureCode,
+} from "@/lib/study/technical-failure";
 
 const isDemoMode =
   process.env.NEXT_PUBLIC_DEMO_MODE === "true" || !isFirebaseConfigured;
@@ -106,6 +111,30 @@ function formatClock(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function microphoneFailureCode(error: unknown): TechnicalFailureCode {
+  const name = error instanceof Error ? error.name : "";
+  return name === "NotAllowedError" || name === "SecurityError"
+    ? "MICROPHONE_PERMISSION_DENIED"
+    : "MICROPHONE_UNAVAILABLE";
+}
+
+async function uploadWavSafely(
+  path: string,
+  wav: Blob,
+  metadata: Record<string, string>,
+  onProgress: (fraction: number) => void,
+): Promise<void> {
+  try {
+    await uploadWav(path, wav, metadata, onProgress);
+  } catch (error) {
+    throw new TechnicalFailureError(
+      navigator.onLine ? "AUDIO_UPLOAD_FAILED" : "NETWORK_ERROR",
+      error instanceof Error ? error.message : "Firebase Storage upload failed.",
+      { cause: error },
+    );
+  }
+}
+
 export function StudentExperience() {
   const router = useRouter();
   const scrollAnchor = useRef<HTMLDivElement | null>(null);
@@ -133,6 +162,7 @@ export function StudentExperience() {
   const recorder = useAudioRecorder({
     maximumSeconds: recordingLimit,
     demoCode: code,
+    requireAzureSpeech: !isDemoMode,
   });
   const messages = activeState?.messages ?? [];
   const worksheet = useMemo(
@@ -231,6 +261,7 @@ export function StudentExperience() {
       setReservation(nextReservation);
       await recorder.start();
     } catch (error) {
+      const failure = failureFromError(error, microphoneFailureCode(error));
       if (!isDemoMode && nextReservation && session) {
         try {
           const payload = await apiFetch<{
@@ -243,6 +274,7 @@ export function StudentExperience() {
                 error instanceof Error
                   ? error.message
                   : "Microphone could not be started.",
+              technicalErrorCode: failure.code,
               transcript: "",
               durationMs: 0,
               speechScores: {
@@ -262,9 +294,7 @@ export function StudentExperience() {
         }
       }
       setReservation(null);
-      setNotice(
-        error instanceof Error ? error.message : "無法啟動麥克風，請再試一次。",
-      );
+      setNotice(failure.userMessage);
     } finally {
       starting.current = false;
     }
@@ -390,7 +420,7 @@ export function StudentExperience() {
           setPendingUploads((count) => Math.max(0, count - 1));
           setNotice("示範錄音與評量資料已保存在此瀏覽器。");
         } else {
-          await uploadWav(
+          await uploadWavSafely(
             reservation.storagePath,
             captured.wav,
             metadata,
@@ -413,12 +443,16 @@ export function StudentExperience() {
           setPendingUploads((count) => Math.max(0, count - 1));
         }
       } catch (error) {
+        const failure = failureFromError(
+          error,
+          online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
+        );
         setNotice(
-          online
-            ? error instanceof Error
+          error instanceof TechnicalFailureError
+            ? failure.userMessage
+            : error instanceof Error
               ? error.message
-              : "分析暫時失敗，錄音仍保存在離線佇列。"
-            : "目前沒有網路，錄音已安全保存在這台裝置。",
+              : failure.userMessage,
         );
       } finally {
         setProcessing(false);
@@ -462,7 +496,7 @@ export function StudentExperience() {
       try {
         for (const item of queued) {
           if (cancelled || !item.analysis) break;
-          await uploadWav(
+          await uploadWavSafely(
             item.storagePath,
             item.blob,
             item.metadata,
@@ -495,11 +529,11 @@ export function StudentExperience() {
         if (!cancelled) setNotice("離線錄音已安全同步到研究資料庫。");
       } catch (error) {
         if (!cancelled) {
-          setNotice(
-            error instanceof Error
-              ? `待上傳錄音仍安全保存：${error.message}`
-              : "待上傳錄音仍安全保存在這台裝置。",
+          const failure = failureFromError(
+            error,
+            online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
           );
+          setNotice(`待同步：${failure.userMessage}`);
         }
       } finally {
         resumingQueue.current = false;

@@ -5,6 +5,7 @@ import type {
   NodeId,
   RoundType,
 } from "./types";
+import type { TechnicalFailureCode } from "./technical-failure";
 
 export interface ReplyTemplate {
   id: string;
@@ -52,6 +53,31 @@ const SHARED_TEMPLATES: Record<string, ReplyTemplate> = {
   technical_error: {
     id: "technical_error",
     text: "Our snowflake signal slipped away; can we try the microphone again, Anna?",
+    kind: "standard",
+  },
+  technical_error_microphone_permission: {
+    id: "technical_error_microphone_permission",
+    text: "I cannot reach the microphone yet; please ask an adult to check permission.",
+    kind: "standard",
+  },
+  technical_error_microphone_unavailable: {
+    id: "technical_error_microphone_unavailable",
+    text: "The microphone is not ready yet; please check it before we try again.",
+    kind: "standard",
+  },
+  technical_error_speech: {
+    id: "technical_error_speech",
+    text: "Our listening service needs help; please ask an adult before trying again.",
+    kind: "standard",
+  },
+  technical_error_upload: {
+    id: "technical_error_upload",
+    text: "Your recording is safe here; it will upload automatically when connection returns.",
+    kind: "standard",
+  },
+  technical_error_analysis: {
+    id: "technical_error_analysis",
+    text: "Your recording is safe; our analysis service will try again automatically soon.",
     kind: "standard",
   },
   plot_pass_agent1: {
@@ -127,10 +153,29 @@ export function getDecisionReply(
   round: RoundType,
   attemptNumber: number,
   group: ExperimentGroup,
+  technicalErrorCode?: TechnicalFailureCode,
 ): ReplyTemplate {
   const node = getNode(nodeId);
 
   if (decision === "TECHNICAL_ERROR") {
+    if (technicalErrorCode === "MICROPHONE_PERMISSION_DENIED") {
+      return SHARED_TEMPLATES.technical_error_microphone_permission;
+    }
+    if (technicalErrorCode === "MICROPHONE_UNAVAILABLE") {
+      return SHARED_TEMPLATES.technical_error_microphone_unavailable;
+    }
+    if (technicalErrorCode?.startsWith("SPEECH_")) {
+      return SHARED_TEMPLATES.technical_error_speech;
+    }
+    if (technicalErrorCode === "AUDIO_UPLOAD_FAILED") {
+      return SHARED_TEMPLATES.technical_error_upload;
+    }
+    if (
+      technicalErrorCode?.startsWith("SEMANTIC_") ||
+      technicalErrorCode?.startsWith("EMOTION_")
+    ) {
+      return SHARED_TEMPLATES.technical_error_analysis;
+    }
     return SHARED_TEMPLATES.technical_error;
   }
 

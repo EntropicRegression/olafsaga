@@ -12,11 +12,17 @@ import { evaluateSemanticWithProvider } from "@/lib/server/azure-openai";
 import { evaluateEmotionWithProvider } from "@/lib/server/emotion";
 import { apiError, HttpError } from "@/lib/server/http";
 import {
+  failureFromError,
+  TechnicalFailureError,
+  TECHNICAL_FAILURE_CODES,
+} from "@/lib/study/technical-failure";
+import {
   assertAudioUploaded,
   finalizeAttempt,
   getAttempt,
   getSession,
   markAttemptAnalyzing,
+  markAttemptTechnicalFailure,
 } from "@/lib/server/repository";
 
 export const runtime = "nodejs";
@@ -27,6 +33,7 @@ const requestSchema = z.object({
   transcript: z.string().max(4000).default(""),
   durationMs: z.number().int().min(0).max(121_000).default(0),
   technicalError: z.string().min(1).max(1000).optional(),
+  technicalErrorCode: z.enum(TECHNICAL_FAILURE_CODES).optional(),
   speechScores: z.object({
     accuracy: z.number().min(0).max(100).nullable(),
     fluency: z.number().min(0).max(100).nullable(),
@@ -58,12 +65,16 @@ export async function POST(
         400,
       );
     }
+    const retryableTechnicalFailure =
+      attempt.status === "technical_error" &&
+      (attempt.technicalFailure as { retryable?: unknown } | undefined)
+        ?.retryable === true;
     const terminal = [
       "passed",
       "failed",
       "forced_advance",
-      "technical_error",
-    ].includes(String(attempt.status));
+    ].includes(String(attempt.status)) ||
+      (attempt.status === "technical_error" && !retryableTechnicalFailure);
     if (terminal) {
       return Response.json({
         result: attempt,
@@ -85,6 +96,7 @@ export async function POST(
       audioPath: String(attempt.storagePath),
       speechScores: body.speechScores,
       technicalError: body.technicalError,
+      technicalErrorCode: body.technicalErrorCode,
     };
 
     if (body.technicalError) {
@@ -115,20 +127,31 @@ export async function POST(
       const session = await finalizeAttempt(principal, input, result);
       return Response.json({ result, session });
     } catch (providerError) {
-      const technicalInput = {
-        ...input,
-        technicalError:
-          providerError instanceof Error
-            ? providerError.message
-            : "Provider analysis failed.",
-      };
-      const result = evaluateAttempt(technicalInput, {}, thresholds);
-      const session = await finalizeAttempt(
-        principal,
-        technicalInput,
-        result,
+      const normalizedError =
+        providerError instanceof TechnicalFailureError
+          ? providerError
+          : new TechnicalFailureError(
+              "ANALYSIS_FAILED",
+              providerError instanceof Error
+                ? providerError.message
+                : "Provider analysis failed.",
+              { cause: providerError },
+            );
+      const failure = failureFromError(normalizedError);
+      await markAttemptTechnicalFailure(
+        body.sessionId,
+        attemptId,
+        input,
+        failure,
+        normalizedError.technicalDetail ?? "Provider analysis failed.",
       );
-      return Response.json({ result, session });
+      console.error("Attempt provider analysis failed.", {
+        attemptId,
+        stage: failure.stage,
+        code: failure.code,
+        detail: normalizedError.technicalDetail,
+      });
+      return apiError(normalizedError);
     }
   } catch (error) {
     return apiError(error);
