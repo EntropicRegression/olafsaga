@@ -114,8 +114,8 @@ const SHARED_TEMPLATES: Record<string, ReplyTemplate> = {
 
 export function getOpeningMessages(): ReplyTemplate[] {
   return [
-    SHARED_TEMPLATES.welcome_sun,
     SHARED_TEMPLATES.welcome_diary,
+    SHARED_TEMPLATES.welcome_sun,
     {
       id: "node_1_plot_prompt",
       text: getNode(1).plotPrompt,
