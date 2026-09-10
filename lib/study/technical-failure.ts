@@ -24,6 +24,14 @@ export const TECHNICAL_FAILURE_CODES = [
 
 export type TechnicalFailureCode = (typeof TECHNICAL_FAILURE_CODES)[number];
 
+export const DEFAULT_TECHNICAL_DETAIL = "Provider analysis failed.";
+
+export function normalizeTechnicalDetail(value: unknown): string {
+  return typeof value === "string" && value.trim()
+    ? value
+    : DEFAULT_TECHNICAL_DETAIL;
+}
+
 export type TechnicalFailureStage =
   | "microphone"
   | "speech"

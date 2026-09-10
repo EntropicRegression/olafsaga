@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   failureFromError,
   getTechnicalFailure,
+  normalizeTechnicalDetail,
   TechnicalFailureError,
 } from "@/lib/study/technical-failure";
 
@@ -28,5 +29,15 @@ describe("technical failure messages", () => {
       stage: "emotion",
       retryable: true,
     });
+  });
+
+  it("always provides a Firestore-safe technical detail", () => {
+    expect(normalizeTechnicalDetail(undefined)).toBe(
+      "Provider analysis failed.",
+    );
+    expect(normalizeTechnicalDetail("  ")).toBe("Provider analysis failed.");
+    expect(normalizeTechnicalDetail("Cloud Run returned HTTP 502.")).toBe(
+      "Cloud Run returned HTTP 502.",
+    );
   });
 });

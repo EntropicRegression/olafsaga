@@ -19,7 +19,10 @@ import type {
 import type { Principal } from "./auth";
 import { AuthError } from "./auth";
 import { getActiveStudyConfig } from "./study-config";
-import type { TechnicalFailure } from "@/lib/study/technical-failure";
+import {
+  normalizeTechnicalDetail,
+  type TechnicalFailure,
+} from "@/lib/study/technical-failure";
 
 const now = () => new Date().toISOString();
 
@@ -308,7 +311,7 @@ export async function markAttemptTechnicalFailure(
   attemptId: string,
   input: AttemptInput,
   failure: TechnicalFailure,
-  technicalDetail: string,
+  technicalDetail: unknown,
 ): Promise<void> {
   await adminDb()
     .collection("sessions")
@@ -321,7 +324,7 @@ export async function markAttemptTechnicalFailure(
         transcript: input.transcript,
         durationMs: input.durationMs,
         speechScores: input.speechScores,
-        technicalError: technicalDetail,
+        technicalError: normalizeTechnicalDetail(technicalDetail),
         technicalErrorCode: failure.code,
         technicalFailure: failure,
         updatedAt: now(),

@@ -1,8 +1,11 @@
 fastapi==0.116.1
 funasr==1.2.6
 google-cloud-storage==3.3.0
+huggingface-hub==0.34.4
 modelscope==1.29.2
+python-multipart==0.0.20
 soundfile==0.13.1
-torch==2.8.0
-torchaudio==2.8.0
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.8.0+cpu
+torchaudio==2.8.0+cpu
 uvicorn[standard]==0.35.0

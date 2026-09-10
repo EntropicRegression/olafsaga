@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from google.cloud import storage
 from pydantic import BaseModel, Field
 
@@ -65,6 +65,25 @@ def normalize_result(result: Any) -> list[dict[str, float | str]]:
     return sorted(scores, key=lambda item: item["score"], reverse=True)
 
 
+def analyze_file(local_path: Path, started: float) -> dict[str, Any]:
+    try:
+        result = get_model().generate(
+            input=str(local_path),
+            output_dir=None,
+            granularity="utterance",
+            extract_embedding=False,
+        )
+        scores = normalize_result(result)
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+    return {
+        "scores": scores,
+        "modelVersion": MODEL_ID,
+        "inferenceMs": round((time.perf_counter() - started) * 1000),
+    }
+
+
 @app.on_event("startup")
 def warm_model() -> None:
     get_model()
@@ -73,6 +92,11 @@ def warm_model() -> None:
 @app.get("/healthz")
 def health() -> dict[str, str]:
     return {"status": "ok", "modelVersion": MODEL_ID}
+
+
+@app.get("/health")
+def health_compat() -> dict[str, str]:
+    return health()
 
 
 @app.post("/v1/analyze")
@@ -87,18 +111,21 @@ def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
             storage_client.bucket(payload.bucket).blob(
                 payload.objectPath
             ).download_to_filename(local_path)
-            result = get_model().generate(
-                input=str(local_path),
-                output_dir=None,
-                granularity="utterance",
-                extract_embedding=False,
-            )
-            scores = normalize_result(result)
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
+        return analyze_file(local_path, started)
 
-    return {
-        "scores": scores,
-        "modelVersion": MODEL_ID,
-        "inferenceMs": round((time.perf_counter() - started) * 1000),
-    }
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)) -> dict[str, Any]:
+    """Keep the original multipart endpoint for existing callers."""
+    started = time.perf_counter()
+    with tempfile.TemporaryDirectory(prefix="emotion2vec-") as directory:
+        local_path = Path(directory) / (file.filename or "attempt.wav")
+        try:
+            with local_path.open("wb") as output:
+                while chunk := await file.read(1024 * 1024):
+                    output.write(chunk)
+        except Exception as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return analyze_file(local_path, started)

@@ -13,6 +13,7 @@ import { evaluateEmotionWithProvider } from "@/lib/server/emotion";
 import { apiError, HttpError } from "@/lib/server/http";
 import {
   failureFromError,
+  normalizeTechnicalDetail,
   TechnicalFailureError,
   TECHNICAL_FAILURE_CODES,
 } from "@/lib/study/technical-failure";
@@ -143,13 +144,13 @@ export async function POST(
         attemptId,
         input,
         failure,
-        normalizedError.technicalDetail ?? "Provider analysis failed.",
+        normalizeTechnicalDetail(normalizedError.technicalDetail),
       );
       console.error("Attempt provider analysis failed.", {
         attemptId,
         stage: failure.stage,
         code: failure.code,
-        detail: normalizedError.technicalDetail,
+        detail: normalizeTechnicalDetail(normalizedError.technicalDetail),
       });
       return apiError(normalizedError);
     }
