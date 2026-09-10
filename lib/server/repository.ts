@@ -3,6 +3,7 @@ import "server-only";
 import { randomInt } from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminBucket, adminDb } from "@/lib/firebase/admin";
+import { withoutUndefinedProperties } from "@/lib/server/firestore-data";
 import {
   getNode,
   resolveStudyThresholds,
@@ -410,7 +411,7 @@ export async function finalizeAttempt(
     transaction.set(
       attemptRef,
       {
-        ...input,
+        ...withoutUndefinedProperties(input),
         ...persistedResult,
         ...(toneHint ? { toneHint } : {}),
         semantic: result.semantic,

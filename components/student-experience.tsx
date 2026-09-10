@@ -34,6 +34,7 @@ import {
   listPendingAudio,
   savePendingAudio,
 } from "@/lib/client/offline-audio";
+import { shouldRetainPendingAudio } from "@/lib/client/pending-audio-policy";
 import {
   isFirebaseConfigured,
   signOutParticipant,
@@ -141,6 +142,7 @@ export function StudentExperience() {
   const stopping = useRef(false);
   const starting = useRef(false);
   const resumingQueue = useRef(false);
+  const suppressedPendingAudio = useRef(new Set<string>());
   const [code, setCode] = useState("");
   const [demoState, setDemoState] = useState<DemoStudyState | null>(null);
   const [formalState, setFormalState] = useState<FormalState | null>(null);
@@ -443,6 +445,16 @@ export function StudentExperience() {
           setPendingUploads((count) => Math.max(0, count - 1));
         }
       } catch (error) {
+        if (!shouldRetainPendingAudio(error)) {
+          suppressedPendingAudio.current.add(pendingId);
+          setPendingUploads((count) => Math.max(0, count - 1));
+          try {
+            await deletePendingAudio(pendingId);
+          } catch {
+            // Suppression prevents another retry during this visit. A later
+            // visit can retry IndexedDB cleanup without blocking recording.
+          }
+        }
         const failure = failureFromError(
           error,
           online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
@@ -485,7 +497,9 @@ export function StudentExperience() {
       }
       const queued = (await listPendingAudio()).filter(
         (item) =>
-          item.metadata.sessionId === formalSessionId && item.analysis,
+          item.metadata.sessionId === formalSessionId &&
+          item.analysis &&
+          !suppressedPendingAudio.current.has(item.id),
       );
       if (cancelled) return;
       setPendingUploads(queued.length);
@@ -493,40 +507,65 @@ export function StudentExperience() {
 
       resumingQueue.current = true;
       setProcessing(true);
+      let queueFailed = false;
       try {
         for (const item of queued) {
           if (cancelled || !item.analysis) break;
-          await uploadWavSafely(
-            item.storagePath,
-            item.blob,
-            item.metadata,
-            setUploadProgress,
-          );
-          const payload = await apiFetch<{
-            result: AttemptResult;
-            session: StudySession;
-          }>(`/api/attempts/${item.id}/complete`, {
-            method: "POST",
-            body: JSON.stringify({
-              sessionId: item.metadata.sessionId,
-              ...item.analysis,
-            }),
-          });
-          if (cancelled) break;
-          appendFormalResult(
-            {
-              wav: item.blob,
-              transcript: item.analysis.transcript,
-              durationMs: item.analysis.durationMs,
-              speechScores: item.analysis.speechScores,
-            },
-            payload.result,
-            payload.session,
-          );
-          await deletePendingAudio(item.id);
-          setPendingUploads((count) => Math.max(0, count - 1));
+          try {
+            await uploadWavSafely(
+              item.storagePath,
+              item.blob,
+              item.metadata,
+              setUploadProgress,
+            );
+            const payload = await apiFetch<{
+              result: AttemptResult;
+              session: StudySession;
+            }>(`/api/attempts/${item.id}/complete`, {
+              method: "POST",
+              body: JSON.stringify({
+                sessionId: item.metadata.sessionId,
+                ...item.analysis,
+              }),
+            });
+            if (cancelled) break;
+            appendFormalResult(
+              {
+                wav: item.blob,
+                transcript: item.analysis.transcript,
+                durationMs: item.analysis.durationMs,
+                speechScores: item.analysis.speechScores,
+              },
+              payload.result,
+              payload.session,
+            );
+            await deletePendingAudio(item.id);
+            setPendingUploads((count) => Math.max(0, count - 1));
+          } catch (error) {
+            queueFailed = true;
+            const failure = failureFromError(
+              error,
+              online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
+            );
+            if (shouldRetainPendingAudio(error)) {
+              if (!cancelled) setNotice(`待同步：${failure.userMessage}`);
+              break;
+            }
+
+            suppressedPendingAudio.current.add(item.id);
+            setPendingUploads((count) => Math.max(0, count - 1));
+            try {
+              await deletePendingAudio(item.id);
+            } catch {
+              // Keep this item suppressed during the current visit so an
+              // IndexedDB cleanup failure cannot restart the analysis loop.
+            }
+            if (!cancelled) setNotice(failure.userMessage);
+          }
         }
-        if (!cancelled) setNotice("離線錄音已安全同步到研究資料庫。");
+        if (!cancelled && !queueFailed) {
+          setNotice("離線錄音已安全同步到研究資料庫。");
+        }
       } catch (error) {
         if (!cancelled) {
           const failure = failureFromError(
