@@ -147,8 +147,42 @@ describe("study decision engine", () => {
             monotone: false,
           },
         }),
-      ).decision,
+    ).decision,
     ).toBe("LOW_FLUENCY");
+  });
+
+  it("rejects a plot response when provider flags no objective fact", () => {
+    const result = evaluateAttempt(
+      input(
+        "Yeah, sure, why not? Let's look together and tell me what happens next.",
+        {
+          nodeId: 2,
+          round: "plot",
+          attemptNumber: 2,
+        },
+      ),
+      {
+        semantic: {
+          language: "en",
+          relevant: true,
+          grammarUnderstandable: true,
+          matchedFactIds: [],
+          hasObjectiveFact: false,
+          hasFeelingExpression: false,
+          contentComplete: true,
+          decisionReason: "The response discusses continuing the story.",
+          source: "azure-openai",
+          modelVersion: "test-model",
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      decision: "OFF_TOPIC",
+      status: "failed",
+      nextNodeId: 2,
+      nextRound: "plot",
+    });
   });
 
   it("requires emotion only for agent2", () => {

@@ -40,7 +40,7 @@ const attempt: AttemptInput = {
 };
 
 describe("study restart", () => {
-  it("preserves the old session and starts a linked run at page 1", () => {
+  it("preserves the old session and restarts the current page at plot", () => {
     const timestamp = "2026-09-10T09:10:00.000Z";
     const plan = createStudyRestart(
       session,
@@ -63,7 +63,7 @@ describe("study restart", () => {
     });
     expect(plan.nextSession).toMatchObject({
       id: "session-new",
-      nodeId: 1,
+      nodeId: 3,
       round: "plot",
       attemptNumber: 1,
       status: "active",
@@ -107,19 +107,29 @@ describe("study restart", () => {
     expect(plan.restart.restartIndex).toBe(2);
   });
 
-  it("clears the visible demo diary while retaining the restart audit", () => {
+  it("clears only the current demo page while retaining earlier pages and audit", () => {
     const current = createDemoState("P-002");
+    current.session.nodeId = 3;
+    current.session.round = "feeling";
     current.messages.push({
       id: "old-message",
       role: "student",
-      text: "Old visible answer",
+      text: "Earlier page answer",
       nodeId: 1,
+      round: "plot",
+      createdAt: new Date().toISOString(),
+    });
+    current.messages.push({
+      id: "current-page-message",
+      role: "student",
+      text: "Current page answer",
+      nodeId: 3,
       round: "plot",
       createdAt: new Date().toISOString(),
     });
     current.worksheet[0] = {
       nodeId: 1,
-      storySummary: "Old worksheet entry",
+      storySummary: "Earlier worksheet entry",
       emotionWord: "surprised",
       status: "confirmed",
     };
@@ -129,7 +139,7 @@ describe("study restart", () => {
     };
 
     const next = submitDemoAttempt(current, {
-      transcript: "Elsa ran away.",
+      transcript: "I want to talk about pizza and games after school today.",
       durationMs: 2000,
       speechScores: {
         accuracy: 80,
@@ -141,23 +151,42 @@ describe("study restart", () => {
 
     expect(next.session.id).not.toBe(current.session.id);
     expect(next.session).toMatchObject({
-      nodeId: 1,
+      nodeId: 3,
       round: "plot",
       attemptNumber: 1,
       restartIndex: 1,
     });
-    expect(next.messages.some((item) => item.text === "Old visible answer")).toBe(
-      false,
-    );
-    expect(next.worksheet.every((entry) => entry.status === "pending")).toBe(
+    expect(next.messages.some((item) => item.text === "Earlier page answer")).toBe(
       true,
     );
+    expect(next.messages.some((item) => item.nodeId === 3 && item.role === "student")).toBe(
+      false,
+    );
+    expect(next.messages.at(-2)).toMatchObject({
+      templateId: "forced_advance",
+      nodeId: 3,
+      round: "feeling",
+    });
+    expect(next.messages.at(-1)).toMatchObject({
+      templateId: "node_3_plot_prompt",
+      nodeId: 3,
+      round: "plot",
+    });
+    expect(next.worksheet[0]).toMatchObject({
+      storySummary: "Earlier worksheet entry",
+      status: "confirmed",
+    });
+    expect(next.worksheet[2]).toMatchObject({
+      storySummary: "",
+      emotionWord: "",
+      status: "pending",
+    });
     expect(next.attempts).toHaveLength(1);
     expect(next.restarts[0]).toMatchObject({
       fromSessionId: current.session.id,
       toSessionId: next.session.id,
       restartIndex: 1,
-      trigger: { nodeId: 1, round: "plot", attemptNumber: 1 },
+      trigger: { nodeId: 3, round: "feeling", attemptNumber: 1 },
     });
   });
 });

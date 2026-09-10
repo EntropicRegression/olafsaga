@@ -8,7 +8,7 @@ import {
   getNode,
   resolveStudyThresholds,
 } from "@/lib/study/config";
-import { getOpeningMessages } from "@/lib/study/templates";
+import { getOpeningMessages, getPrompt } from "@/lib/study/templates";
 import { createStudyRestart } from "@/lib/study/restart";
 import type {
   AttemptCompletion,
@@ -619,15 +619,30 @@ export async function finalizeAttempt(
         },
         { merge: true },
       );
-      getOpeningMessages().forEach((message, sequence) => {
+      const restartPrompt = getPrompt(input.nodeId, "plot");
+      [
+        {
+          id: result.replyTemplateId,
+          text: result.reply,
+          toneHint: result.toneHint,
+          nodeId: input.nodeId,
+          round: input.round,
+        },
+        {
+          ...restartPrompt,
+          nodeId: input.nodeId,
+          round: "plot" as const,
+        },
+      ].forEach((message, sequence) => {
         transaction.set(nextSessionRef.collection("messages").doc(), {
           ...(session.experimentId ? { experimentId: session.experimentId } : {}),
           ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
           role: "olaf",
           text: message.text,
           templateId: message.id,
-          nodeId: 1,
-          round: "plot",
+          ...(message.toneHint ? { toneHint: message.toneHint } : {}),
+          nodeId: message.nodeId,
+          round: message.round,
           sequence,
           createdAt: timestamp,
         });
@@ -762,54 +777,120 @@ export async function reopenWorksheet(
   });
 }
 
+interface SessionLineageEntry {
+  id: string;
+  data: FirebaseFirestore.DocumentData;
+  ref: FirebaseFirestore.DocumentReference;
+}
+
+async function getSessionLineage(
+  principal: Principal,
+  sessionId: string,
+): Promise<SessionLineageEntry[]> {
+  const db = adminDb();
+  const lineage: SessionLineageEntry[] = [];
+  const visited = new Set<string>();
+  let currentId: string | undefined = sessionId;
+
+  while (currentId) {
+    if (visited.has(currentId) || lineage.length >= 50) {
+      throw new AuthError("The study restart chain is invalid.", 409);
+    }
+    visited.add(currentId);
+
+    const snapshot: FirebaseFirestore.DocumentSnapshot = await db
+      .collection("sessions")
+      .doc(currentId)
+      .get();
+    if (!snapshot.exists) throw new AuthError("Session was not found.", 404);
+    const data: FirebaseFirestore.DocumentData = snapshot.data()!;
+    assertSessionAccess(principal, toSession(snapshot.id, data));
+    lineage.unshift({ id: snapshot.id, data, ref: snapshot.ref });
+    currentId =
+      typeof data.restartedFromSessionId === "string"
+        ? data.restartedFromSessionId
+        : undefined;
+  }
+
+  return lineage;
+}
+
+function restartedPage(entry: SessionLineageEntry): NodeId | undefined {
+  const trigger = entry.data.restartTrigger;
+  if (!trigger || typeof trigger !== "object") return undefined;
+  const nodeId = Number((trigger as { nodeId?: unknown }).nodeId);
+  return nodeId >= 1 && nodeId <= 5 ? (nodeId as NodeId) : undefined;
+}
+
 export async function getSessionMessages(
   principal: Principal,
   sessionId: string,
 ) {
-  const session = await adminDb().collection("sessions").doc(sessionId).get();
-  if (!session.exists) throw new AuthError("Session was not found.", 404);
-  if (
-    session.data()?.participantId !== principal.uid &&
-    principal.role !== "researcher"
-  ) {
-    throw new AuthError("This session belongs to another participant.", 403);
-  }
-  const messages = await session.ref
-    .collection("messages")
-    .orderBy("createdAt", "asc")
-    .get();
-  const rows: Array<Record<string, unknown>> = messages.docs.map((doc) => ({
-    id: doc.id,
-    ...doc.data(),
-  }));
-  return rows
-    .sort((left, right) => {
-      const timeDifference = String(left.createdAt).localeCompare(
-        String(right.createdAt),
-      );
-      if (timeDifference !== 0) return timeDifference;
-      return Number(left.sequence ?? Number.MAX_SAFE_INTEGER) -
-        Number(right.sequence ?? Number.MAX_SAFE_INTEGER);
-    });
+  const lineage = await getSessionLineage(principal, sessionId);
+  const snapshots = await Promise.all(
+    lineage.map((entry) =>
+      entry.ref.collection("messages").orderBy("createdAt", "asc").get(),
+    ),
+  );
+  let rows: Array<Record<string, unknown>> = [];
+
+  snapshots.forEach((messages, index) => {
+    const restartNodeId = restartedPage(lineage[index]);
+    if (restartNodeId) {
+      rows = rows.filter((row) => Number(row.nodeId) < restartNodeId);
+    }
+    rows.push(
+      ...messages.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })),
+    );
+  });
+
+  return rows.sort((left, right) => {
+    const timeDifference = String(left.createdAt).localeCompare(
+      String(right.createdAt),
+    );
+    if (timeDifference !== 0) return timeDifference;
+    return (
+      Number(left.sequence ?? Number.MAX_SAFE_INTEGER) -
+      Number(right.sequence ?? Number.MAX_SAFE_INTEGER)
+    );
+  });
 }
 
 export async function getWorksheetEntries(
   principal: Principal,
   sessionId: string,
 ) {
-  const session = await adminDb().collection("sessions").doc(sessionId).get();
-  if (!session.exists) throw new AuthError("Session was not found.", 404);
-  if (
-    session.data()?.participantId !== principal.uid &&
-    principal.role !== "researcher"
-  ) {
-    throw new AuthError("This session belongs to another participant.", 403);
-  }
-  const entries = await adminDb()
-    .collection("worksheets")
-    .doc(sessionId)
-    .collection("entries")
-    .orderBy("nodeId", "asc")
-    .get();
-  return entries.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const lineage = await getSessionLineage(principal, sessionId);
+  const db = adminDb();
+  const snapshots = await Promise.all(
+    lineage.map((entry) =>
+      db
+        .collection("worksheets")
+        .doc(entry.id)
+        .collection("entries")
+        .orderBy("nodeId", "asc")
+        .get(),
+    ),
+  );
+  const entries = new Map<NodeId, Record<string, unknown>>();
+
+  snapshots.forEach((snapshot, index) => {
+    const restartNodeId = restartedPage(lineage[index]);
+    if (restartNodeId) {
+      for (const nodeId of entries.keys()) {
+        if (nodeId >= restartNodeId) entries.delete(nodeId);
+      }
+    }
+    snapshot.docs.forEach((doc) => {
+      const row: Record<string, unknown> = { id: doc.id, ...doc.data() };
+      entries.set(Number(row.nodeId) as NodeId, row);
+    });
+  });
+
+  return [...entries.values()].sort(
+    (left, right) => Number(left.nodeId) - Number(right.nodeId),
+  );
 }

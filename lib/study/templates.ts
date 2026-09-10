@@ -107,7 +107,7 @@ const SHARED_TEMPLATES: Record<string, ReplyTemplate> = {
   },
   forced_advance: {
     id: "forced_advance",
-    text: "This page needs more practice, Anna; our diary can gently continue today!",
+    text: "This page needs more practice, Anna; let us try this story page again.",
     kind: "standard",
   },
 };
@@ -181,7 +181,9 @@ export function getDecisionReply(
 
   if (
     decision === "CHINESE_OR_UNKNOWN" ||
-    (attemptNumber >= 2 && decision !== "LOW_EMOTION")
+    (attemptNumber >= 2 &&
+      decision !== "LOW_EMOTION" &&
+      decision !== "PASS")
   ) {
     return getScaffold(nodeId, round);
   }

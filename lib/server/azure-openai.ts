@@ -105,14 +105,17 @@ export async function evaluateSemanticWithProvider(
     ],
   };
   const systemPrompt =
-    "You are a strict but fair research scorer for Taiwanese eighth-grade spoken English. Evaluate only; never continue the conversation. Minor grammar mistakes pass when the meaning is clear. Return the required JSON schema.";
+    "You are a strict but fair research scorer for Taiwanese eighth-grade spoken English. Evaluate only; never continue the conversation. Judge only facts or feelings explicitly stated in the transcript; never infer an answer from the question, story summary, or conversational intent. Agreement, requests to continue, questions about what happens next, and other conversation-management language are off-topic unless the transcript itself states a required story fact or Anna's own feeling. Minor grammar mistakes pass when the intended meaning is clear. For a plot response, relevant and contentComplete may be true only when hasObjectiveFact is true and matchedFactIds contains at least one fact directly supported by the transcript. For a feeling response, relevant and contentComplete may be true only when hasFeelingExpression is true. Return the required JSON schema.";
   const evaluationInput = JSON.stringify({
     transcript,
     round,
     node: {
       id: nodeId,
       storySummary: node.storySummary,
-      acceptedFactIds: node.factIds,
+      acceptedFacts: node.factIds.map((id, index) => ({
+        id,
+        keywords: node.factKeywords[index] ?? [],
+      })),
       targetFeeling: node.targetEmotion,
     },
     rubric:

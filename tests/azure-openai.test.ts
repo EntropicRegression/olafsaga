@@ -80,6 +80,14 @@ describe("Azure OpenAI semantic evaluation", () => {
     expect(body.reasoning).toEqual({ effort: "minimal" });
     expect(body.store).toBe(false);
     expect(body.messages).toBeUndefined();
+    expect(body.instructions).toContain(
+      "conversation-management language are off-topic",
+    );
+    const evaluationInput = JSON.parse(body.input);
+    expect(evaluationInput.node.acceptedFacts[0]).toEqual({
+      id: "elsa_removed_glove",
+      keywords: ["elsa", "glove"],
+    });
   });
 
   it("extracts output text from the Responses output array", async () => {

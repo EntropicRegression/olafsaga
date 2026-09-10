@@ -9,7 +9,7 @@ One uninterrupted run through the Adventure Diary for one Enrollment. A Study Re
 _Avoid_: Browser session, login session, run record
 
 **Study Restart**:
-The recorded transition that preserves an unsuccessful Study Session and begins a new Study Session at Page 1, Plot Round, Attempt 1. See [ADR 0001](docs/adr/0001-linked-study-session-restarts.md).
+The recorded transition that preserves an unsuccessful Study Session and begins a linked Study Session at the same Page, Plot Round, Attempt 1. Completed earlier Pages remain part of the participant's visible diary, while the trigger records the Page and Round that exhausted its Attempts. See [ADR 0001](docs/adr/0001-linked-study-session-restarts.md).
 _Avoid_: Reset, retry, clearing the study
 
 **Root Session**:

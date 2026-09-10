@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { STUDY_THRESHOLDS } from "@/lib/study/config";
-import { allStaticTemplates } from "@/lib/study/templates";
+import {
+  allStaticTemplates,
+  getDecisionReply,
+} from "@/lib/study/templates";
 import { countEnglishWords, stripFormatting } from "@/lib/study/text";
 
 describe("approved response library", () => {
@@ -37,4 +40,13 @@ describe("approved response library", () => {
     const ids = allStaticTemplates().map((template) => template.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it.each([1, 2, 3])(
+    "uses a pass reply when attempt %s passes",
+    (attemptNumber) => {
+      expect(
+        getDecisionReply("PASS", 2, "plot", attemptNumber, "agent1").id,
+      ).toBe("plot_pass_agent1");
+    },
+  );
 });

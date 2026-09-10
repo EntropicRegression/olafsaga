@@ -196,18 +196,38 @@ export function submitDemoAttempt(
       { sessionId: makeId("session"), restartId: makeId("restart") },
       timestamp,
     );
+    const restartNodeId = restartPlan.restart.trigger.nodeId;
     return {
       ...next,
       session: restartPlan.nextSession,
-      messages: getOpeningMessages().map((template) =>
-        messageFromTemplate(template, 1, "plot"),
+      messages: [
+        ...state.messages.filter((item) => item.nodeId < restartNodeId),
+        {
+          id: makeId("message"),
+          role: "olaf",
+          text: result.reply,
+          templateId: result.replyTemplateId,
+          nodeId: restartNodeId,
+          round: restartPlan.restart.trigger.round,
+          createdAt: timestamp,
+          toneHint: result.toneHint,
+        },
+        messageFromTemplate(
+          getPrompt(restartNodeId, "plot"),
+          restartNodeId,
+          "plot",
+        ),
+      ],
+      worksheet: state.worksheet.map((entry) =>
+        entry.nodeId === restartNodeId
+          ? {
+              nodeId: restartNodeId,
+              storySummary: "",
+              emotionWord: "",
+              status: "pending" as const,
+            }
+          : entry,
       ),
-      worksheet: [1, 2, 3, 4, 5].map((nodeId) => ({
-        nodeId: nodeId as NodeId,
-        storySummary: "",
-        emotionWord: "",
-        status: "pending" as const,
-      })),
       restarts: [...(state.restarts ?? []), restartPlan.restart],
     };
   }

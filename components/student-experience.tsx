@@ -57,7 +57,6 @@ import { encodeWav } from "@/lib/audio/wav";
 import { getNode } from "@/lib/study/config";
 import {
   getCompletionReply,
-  getOpeningMessages,
   getPrompt,
 } from "@/lib/study/templates";
 import type {
@@ -111,24 +110,6 @@ function message(
     createdAt: new Date().toISOString(),
     ...extras,
   };
-}
-
-function emptyWorksheet(): WorksheetEntry[] {
-  return ([1, 2, 3, 4, 5] as NodeId[]).map((nodeId) => ({
-    nodeId,
-    storySummary: "",
-    emotionWord: "",
-    status: "pending",
-  }));
-}
-
-function openingMessages(session: StudySession): ChatMessage[] {
-  return getOpeningMessages().map((template) =>
-    message("olaf", template.text, session, {
-      templateId: template.id,
-      toneHint: template.toneHint,
-    }),
-  );
 }
 
 function formatClock(totalSeconds: number) {
@@ -339,10 +320,35 @@ export function StudentExperience() {
       setFormalState((current) => {
         if (!current) return current;
         if (restart) {
+          const restartNodeId = restart.trigger.nodeId;
+          const prompt = getPrompt(restartNodeId, "plot");
           return {
             session: nextSession,
-            messages: openingMessages(nextSession),
-            worksheet: emptyWorksheet(),
+            messages: [
+              ...current.messages.filter(
+                (item) => item.nodeId < restartNodeId,
+              ),
+              message("olaf", result.reply, nextSession, {
+                templateId: result.replyTemplateId,
+                toneHint: result.toneHint,
+                nodeId: restartNodeId,
+                round: restart.trigger.round,
+              }),
+              message("olaf", prompt.text, nextSession, {
+                templateId: prompt.id,
+                toneHint: prompt.toneHint,
+              }),
+            ],
+            worksheet: current.worksheet.map((entry) =>
+              entry.nodeId === restartNodeId
+                ? {
+                    nodeId: restartNodeId,
+                    storySummary: "",
+                    emotionWord: "",
+                    status: "pending",
+                  }
+                : entry,
+            ),
           };
         }
         const previousSession = current.session;

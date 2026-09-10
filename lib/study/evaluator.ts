@@ -71,7 +71,17 @@ function determineDecision(
     return "CHINESE_OR_UNKNOWN";
   }
   if (!semantic.grammarUnderstandable) return "GRAMMAR_UNCLEAR";
-  if (!semantic.relevant || !semantic.contentComplete) return "OFF_TOPIC";
+  const hasRequiredRoundContent =
+    input.round === "plot"
+      ? semantic.hasObjectiveFact && semantic.matchedFactIds.length > 0
+      : semantic.hasFeelingExpression;
+  if (
+    !semantic.relevant ||
+    !semantic.contentComplete ||
+    !hasRequiredRoundContent
+  ) {
+    return "OFF_TOPIC";
+  }
   if (wordCount < thresholds.minimumWordCount) return "TOO_SHORT";
 
   if (

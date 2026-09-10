@@ -58,7 +58,7 @@ export function createStudyRestart(
       ...(currentSession.enrollmentId ? { enrollmentId: currentSession.enrollmentId } : {}),
       group: currentSession.group,
       classId: currentSession.classId,
-      nodeId: 1,
+      nodeId: attempt.nodeId,
       round: "plot",
       attemptNumber: 1,
       status: "active",
