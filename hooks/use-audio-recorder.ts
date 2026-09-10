@@ -137,8 +137,6 @@ export function useAudioRecorder(
       source.current = mediaSource;
       worklet.current = recorder;
       silentGain.current = gain;
-      startedAt.current = Date.now();
-      setIsRecording(true);
 
       try {
         azure.current = await startAzureRecognition(
@@ -157,6 +155,12 @@ export function useAudioRecorder(
         );
       }
       if (!azure.current) startBrowserFallback();
+
+      // Only expose the live recording state after speech recognition is ready,
+      // so the first spoken words can produce interim transcript events.
+      chunks.current = [];
+      startedAt.current = Date.now();
+      setIsRecording(true);
 
       timer.current = setInterval(() => {
         const elapsed = Math.floor((Date.now() - startedAt.current) / 1000);

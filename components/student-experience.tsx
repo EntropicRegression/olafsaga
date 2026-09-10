@@ -34,7 +34,10 @@ import {
   listPendingAudio,
   savePendingAudio,
 } from "@/lib/client/offline-audio";
-import { shouldRetainPendingAudio } from "@/lib/client/pending-audio-policy";
+import {
+  selectPendingAudioForRetry,
+  shouldRetainPendingAudio,
+} from "@/lib/client/pending-audio-policy";
 import {
   isFirebaseConfigured,
   signOutParticipant,
@@ -143,6 +146,7 @@ export function StudentExperience() {
   const starting = useRef(false);
   const resumingQueue = useRef(false);
   const suppressedPendingAudio = useRef(new Set<string>());
+  const foregroundPendingAudio = useRef(new Set<string>());
   const [code, setCode] = useState("");
   const [demoState, setDemoState] = useState<DemoStudyState | null>(null);
   const [formalState, setFormalState] = useState<FormalState | null>(null);
@@ -379,6 +383,7 @@ export function StudentExperience() {
       setProcessing(true);
       setNotice(null);
       const pendingId = reservation.id;
+      foregroundPendingAudio.current.add(pendingId);
       const metadata = {
         sessionId: session.id,
         nodeId: String(session.nodeId),
@@ -467,6 +472,7 @@ export function StudentExperience() {
               : failure.userMessage,
         );
       } finally {
+        foregroundPendingAudio.current.delete(pendingId);
         setProcessing(false);
         setReservation(null);
         setUploadProgress(0);
@@ -495,11 +501,11 @@ export function StudentExperience() {
       ) {
         return;
       }
-      const queued = (await listPendingAudio()).filter(
-        (item) =>
-          item.metadata.sessionId === formalSessionId &&
-          item.analysis &&
-          !suppressedPendingAudio.current.has(item.id),
+      const queued = selectPendingAudioForRetry(
+        await listPendingAudio(),
+        formalSessionId,
+        suppressedPendingAudio.current,
+        foregroundPendingAudio.current,
       );
       if (cancelled) return;
       setPendingUploads(queued.length);

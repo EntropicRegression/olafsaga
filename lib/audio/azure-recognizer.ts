@@ -85,16 +85,12 @@ export async function startAzureRecognition(
   );
   speechConfig.speechRecognitionLanguage = "en-US";
   speechConfig.outputFormat = sdk.OutputFormat.Detailed;
-  const audioConfig = sdk.AudioConfig.fromStreamInput(stream);
-  const languageConfig = sdk.AutoDetectSourceLanguageConfig.fromLanguages([
-    "en-US",
-    "zh-TW",
-  ]);
-  const recognizer = sdk.SpeechRecognizer.FromConfig(
-    speechConfig,
-    languageConfig,
-    audioConfig,
+  speechConfig.setProperty(
+    sdk.PropertyId.SpeechServiceResponse_StablePartialResultThreshold,
+    "1",
   );
+  const audioConfig = sdk.AudioConfig.fromStreamInput(stream);
+  const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
   const pronunciation = new sdk.PronunciationAssessmentConfig(
     "",
     sdk.PronunciationAssessmentGradingSystem.HundredMark,
