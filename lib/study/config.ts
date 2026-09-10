@@ -51,8 +51,9 @@ export const STUDY_NODES: Record<NodeId, NodeConfig> = {
       "You remembered the moment beautifully; how did your heart feel then, Anna?",
     storySummary: "Elsa removed her glove, lost control of her magic, and ran away.",
     scaffolds: {
-      plot: "Try starting: Elsa ran away",
-      feeling: "Try starting: I felt surprised",
+      plot: "Try starting: Elsa lost control of her magic and ran away.",
+      feeling:
+        "Try starting: I felt very surprised when Elsa's magic filled the room.",
     },
   },
   2: {
@@ -72,8 +73,9 @@ export const STUDY_NODES: Record<NodeId, NodeConfig> = {
       "That moment was very powerful; how did your heart feel inside, Anna?",
     storySummary: "Elsa's magic hit Anna, and Anna's hair began turning white.",
     scaffolds: {
-      plot: "Try starting: Her magic hit",
-      feeling: "Try starting: I felt scared",
+      plot: "Try starting: Elsa's magic hit Anna and turned her hair white.",
+      feeling:
+        "Try starting: I felt very scared when Elsa's magic hit me.",
     },
   },
   3: {
@@ -93,8 +95,9 @@ export const STUDY_NODES: Record<NodeId, NodeConfig> = {
       "Their answer changed everything; how did those words make you feel, Anna?",
     storySummary: "The trolls said an act of true love could thaw Anna's heart.",
     scaffolds: {
-      plot: "Try saying: True love helped",
-      feeling: "Try saying: I felt worried",
+      plot: "Try saying: The trolls said true love could thaw Anna's heart.",
+      feeling:
+        "Try saying: I felt very worried because Anna needed true love.",
     },
   },
   4: {
@@ -113,8 +116,8 @@ export const STUDY_NODES: Record<NodeId, NodeConfig> = {
       "That was such a sad moment; how did your heart feel afterward, Anna?",
     storySummary: "Hans refused to kiss Anna and left her alone in the cold.",
     scaffolds: {
-      plot: "Try saying: Hans did not",
-      feeling: "Try saying: I felt sad",
+      plot: "Try saying: Hans refused to kiss Anna and left her alone.",
+      feeling: "Try saying: I felt very sad when Hans left me alone.",
     },
   },
   5: {
@@ -134,8 +137,9 @@ export const STUDY_NODES: Record<NodeId, NodeConfig> = {
       "The ending brought summer back; how did your heart feel then, Anna?",
     storySummary: "Anna protected Elsa, and their true love melted the frozen magic.",
     scaffolds: {
-      plot: "Try saying: The ice melted",
-      feeling: "Try saying: I felt happy",
+      plot: "Try saying: Anna protected Elsa and true love melted the ice.",
+      feeling:
+        "Try saying: I felt very happy when warm summer returned again.",
     },
   },
 };

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { STUDY_THRESHOLDS } from "@/lib/study/config";
 import { allStaticTemplates } from "@/lib/study/templates";
 import { countEnglishWords, stripFormatting } from "@/lib/study/text";
 
@@ -15,14 +16,19 @@ describe("approved response library", () => {
     expect(invalid).toEqual([]);
   });
 
-  it("keeps scaffolds between 4 and 5 English words", () => {
+  it("keeps spoken scaffolds long enough to pass and short enough to repeat", () => {
     const invalid = allStaticTemplates()
       .filter((template) => template.kind === "scaffold")
       .map((template) => ({
         id: template.id,
-        count: countEnglishWords(template.text),
+        count: countEnglishWords(
+          template.text.replace(/^Try (?:starting|saying):\s*/i, ""),
+        ),
       }))
-      .filter(({ count }) => count < 4 || count > 5);
+      .filter(
+        ({ count }) =>
+          count < STUDY_THRESHOLDS.minimumWordCount || count > 12,
+      );
 
     expect(invalid).toEqual([]);
   });

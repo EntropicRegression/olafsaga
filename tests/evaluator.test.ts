@@ -9,7 +9,11 @@ import type {
   RoundType,
   StudyThresholds,
 } from "@/lib/study/types";
-import { STUDY_THRESHOLDS, resolveStudyThresholds } from "@/lib/study/config";
+import {
+  STUDY_NODES,
+  STUDY_THRESHOLDS,
+  resolveStudyThresholds,
+} from "@/lib/study/config";
 
 function input(
   transcript: string,
@@ -76,6 +80,40 @@ describe("study decision engine", () => {
     expect(result.status).toBe("passed");
     expect(result.emotion).toBeNull();
   });
+
+  it.each(
+    ([1, 2, 3, 4, 5] as NodeId[]).flatMap((nodeId) =>
+      (["plot", "feeling"] as RoundType[]).map((round) => [
+        nodeId,
+        round,
+        STUDY_NODES[nodeId].scaffolds[round].replace(
+          /^Try (?:starting|saying):\s*/i,
+          "",
+        ),
+      ] as const),
+    ),
+  )(
+    "passes the exact scaffold answer at node %s %s",
+    (nodeId, round, transcript) => {
+      const result = evaluateAttempt(
+        input(transcript, {
+          nodeId,
+          round,
+          speechScores: {
+            accuracy: 100,
+            fluency: 100,
+            prosody: 100,
+            monotone: false,
+          },
+        }),
+      );
+
+      expect(result).toMatchObject({
+        decision: "PASS",
+        status: "passed",
+      });
+    },
+  );
 
   it("applies the required failure precedence", () => {
     expect(evaluateAttempt(input("我不知道")).decision).toBe(
