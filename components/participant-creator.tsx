@@ -26,12 +26,14 @@ function generatePassword() {
 
 interface ParticipantCreatorProps {
   demo: boolean;
+  experimentId?: string;
   onCreated: () => Promise<void>;
   onNotice: (message: string) => void;
 }
 
 export function ParticipantCreator({
   demo,
+  experimentId,
   onCreated,
   onNotice,
 }: ParticipantCreatorProps) {
@@ -49,6 +51,10 @@ export function ParticipantCreator({
       onNotice("訪客預覽模式不會建立正式學生帳號。");
       return;
     }
+    if (!experimentId) {
+      onNotice("請先在上方選取 Draft Test Batch，再建立單筆帳號。");
+      return;
+    }
     setSubmitting(true);
     try {
       const participant = await apiFetch<{ code: string }>(
@@ -56,6 +62,7 @@ export function ParticipantCreator({
         {
           method: "POST",
           body: JSON.stringify({
+            experimentId,
             code,
             password,
             classId,

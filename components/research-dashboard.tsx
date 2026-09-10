@@ -14,6 +14,7 @@ import {
   CloudCog,
   Database,
   FileUp,
+  FlaskConical,
   Gauge,
   Headphones,
   LayoutDashboard,
@@ -30,7 +31,9 @@ import {
 import { Brand } from "./brand";
 import { ParticipantCreator } from "./participant-creator";
 import { ResearchSettings } from "./research-settings";
+import { ExperimentManager } from "./experiment-manager";
 import { apiFetch } from "@/lib/client/api";
+import { parseCsvRecords } from "@/lib/study/csv";
 import { isFirebaseConfigured, signOutParticipant } from "@/lib/firebase/client";
 import { isTechnicalFailureCode, getTechnicalFailure } from "@/lib/study/technical-failure";
 
@@ -164,8 +167,16 @@ export function ResearchDashboard() {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [overview, setOverview] = useState<Overview | null>(null);
+  const [experimentOptions, setExperimentOptions] = useState<Array<{
+    id: string;
+    code: string;
+    name: string;
+    mode: "test" | "formal";
+    status: string;
+  }>>([]);
+  const [exportExperimentId, setExportExperimentId] = useState("");
   const [activeNav, setActiveNav] = useState<
-    "overview" | "sessions" | "participants" | "settings"
+    "overview" | "sessions" | "participants" | "experiments" | "settings"
   >("overview");
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
@@ -183,13 +194,30 @@ export function ResearchDashboard() {
     participantCount: number;
   } | null>(null);
 
-  async function load() {
+  async function load(scopeExperimentId = exportExperimentId) {
     setLoading(true);
     try {
       if (isDemoMode) {
         setOverview(demoOverview);
       } else {
-        setOverview(await apiFetch<Overview>("/api/admin/overview"));
+        const [nextOverview, experimentPayload] = await Promise.all([
+          apiFetch<Overview>(
+            scopeExperimentId
+              ? `/api/admin/overview?experimentId=${encodeURIComponent(scopeExperimentId)}`
+              : "/api/admin/overview",
+          ),
+          apiFetch<{
+            experiments: Array<{
+              id: string;
+              code: string;
+              name: string;
+              mode: "test" | "formal";
+              status: string;
+            }>;
+          }>("/api/admin/experiments"),
+        ]);
+        setOverview(nextOverview);
+        setExperimentOptions(experimentPayload.experiments);
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "後台資料載入失敗。");
@@ -205,6 +233,8 @@ export function ResearchDashboard() {
       return;
     }
     void load();
+  // load intentionally captures the current export scope; later scope changes trigger it explicitly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   const filteredSessions = useMemo(() => {
@@ -235,6 +265,10 @@ export function ResearchDashboard() {
       URL.revokeObjectURL(url);
       return;
     }
+    if (!exportExperimentId) {
+      setNotice("請先選取 Experiment Batch，再匯出該批次資料。");
+      return;
+    }
     setExporting(true);
     try {
       const payload = await apiFetch<{
@@ -245,7 +279,10 @@ export function ResearchDashboard() {
         participantCount: number;
       }>(
         "/api/admin/export",
-        { method: "POST", body: "{}" },
+        {
+          method: "POST",
+          body: JSON.stringify({ experimentId: exportExperimentId }),
+        },
       );
       setExportResult(payload);
       setNotice(
@@ -260,36 +297,57 @@ export function ResearchDashboard() {
 
   async function importCsv(file: File) {
     const text = await file.text();
-    const lines = text.split(/\r?\n/).filter(Boolean);
-    const [headerLine, ...rows] = lines;
-    const headers = headerLine.split(",").map((value) => value.trim());
-    const participants = rows.map((line) => {
-      const values = line.split(",").map((value) => value.trim());
-      const row = Object.fromEntries(
-        headers.map((header, index) => [header, values[index] ?? ""]),
-      );
-      return {
-        code: row.code,
-        password: row.password,
-        classId: row.classId,
-        consentVersion: row.consentVersion,
-        consentedAt: row.consentedAt,
-      };
-    });
+    const records = parseCsvRecords(text);
     if (isDemoMode) {
-      setNotice(`已讀取 ${participants.length} 筆示範帳號；正式模式才會寫入 Firebase。`);
+      setNotice(`已讀取 ${records.length} 筆示範 roster；正式模式才會寫入 Firebase。`);
+      return;
+    }
+    if (!exportExperimentId) {
+      setNotice("請先選取 Draft Experiment Batch，再匯入 roster CSV。");
       return;
     }
     const payload = await apiFetch<{
-      results: Array<{ uid?: string; error?: string }>;
-    }>("/api/admin/participants/import", {
+      enrollmentCount: number;
+      credentialsCsv: string;
+    }>(`/api/admin/experiments/${exportExperimentId}/participants/import`, {
       method: "POST",
-      body: JSON.stringify({ participants }),
+      headers: { "idempotency-key": crypto.randomUUID() },
+      body: JSON.stringify({ csv: text }),
     });
-    setNotice(
-      `匯入完成：${payload.results.filter((item) => item.uid).length} 筆成功。`,
-    );
+    const blob = new Blob([payload.credentialsCsv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${exportExperimentId.toLowerCase()}-credentials.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setNotice(`匯入完成：${payload.enrollmentCount} 筆；一次性帳密 CSV 已下載。`);
     await load();
+  }
+
+  async function rotatePassword(participantId: string) {
+    if (isDemoMode) {
+      setNotice("Demo mode does not rotate participant passwords.");
+      return;
+    }
+    try {
+      const result = await apiFetch<{ participantCode: string; password: string }>(
+        `/api/admin/participants/${participantId}/rotate-password`,
+        { method: "POST", body: "{}" },
+      );
+      const blob = new Blob([
+        `participantCode,password\n${result.participantCode},${result.password}\n`,
+      ], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${result.participantCode.toLowerCase()}-rotated-password.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice(`Password rotated for ${result.participantCode}; the one-time CSV was downloaded.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Password rotation failed.");
+    }
   }
 
   async function importVocabulary(file: File) {
@@ -365,6 +423,13 @@ export function ResearchDashboard() {
             <Users size={18} />
             受試者
           </button>
+          <button
+            className={activeNav === "experiments" ? "is-active" : ""}
+            onClick={() => setActiveNav("experiments")}
+          >
+            <FlaskConical size={18} />
+            實驗批次
+          </button>
           <span>MANAGE</span>
           <button
             className={activeNav === "settings" ? "is-active" : ""}
@@ -402,6 +467,25 @@ export function ResearchDashboard() {
               <RefreshCw size={16} />
               更新
             </button>
+            {!isDemoMode && experimentOptions.length > 0 && (
+              <select
+                className="admin-export-scope"
+                value={exportExperimentId}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setExportExperimentId(value);
+                  void load(value || undefined);
+                }}
+                aria-label="Export scope"
+              >
+                <option value="">Select a batch to scope the dashboard</option>
+                {experimentOptions.map((experiment) => (
+                  <option key={experiment.id} value={experiment.id}>
+                    {experiment.mode === "test" ? "TEST" : "FORMAL"} · {experiment.code} · {experiment.status}
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               className="primary-button"
               onClick={() => void exportData()}
@@ -469,6 +553,7 @@ export function ResearchDashboard() {
                 {activeNav === "sessions" && "學習場次"}
                 {activeNav === "participants" && "受試者管理"}
                 {activeNav === "settings" && "研究設定"}
+                {activeNav === "experiments" && "實驗批次"}
               </h1>
               <p>
                 {activeNav === "overview"
@@ -651,6 +736,7 @@ export function ResearchDashboard() {
             <section className="participant-workspace">
               <ParticipantCreator
                 demo={isDemoMode}
+                experimentId={exportExperimentId || undefined}
                 onCreated={load}
                 onNotice={setNotice}
               />
@@ -661,8 +747,8 @@ export function ResearchDashboard() {
                     <span className="section-kicker">BATCH IMPORT</span>
                     <h2>批次匯入受試者</h2>
                     <p>
-                      CSV 欄位：code、password、classId、consentVersion、consentedAt。
-                      適合一次建立多個帳號。
+                      Draft Batch roster CSV 欄位：participantCode、classId、consentVersion、consentedAt。
+                      後端會驗證整份資料並下載一次性帳密。
                     </p>
                   </div>
                   <input
@@ -698,11 +784,22 @@ export function ResearchDashboard() {
                         <small>{String(participant.classId)}</small>
                       </div>
                       <b>{String(participant.group ?? "待分派")}</b>
+                      <button
+                        className="text-action participant-rotate-button"
+                        onClick={() => void rotatePassword(String(participant.id))}
+                        type="button"
+                      >
+                        Rotate
+                      </button>
                     </div>
                   ))}
                 </article>
               </div>
             </section>
+          )}
+
+          {activeNav === "experiments" && (
+            <ExperimentManager demo={isDemoMode} onNotice={setNotice} />
           )}
 
           {activeNav === "settings" && (

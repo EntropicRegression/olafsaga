@@ -27,13 +27,21 @@ function serviceAccountFromEnvironment() {
 export function isFirebaseAdminConfigured(): boolean {
   return Boolean(
     process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 ||
-      process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.FIRESTORE_EMULATOR_HOST ||
+      process.env.FIREBASE_AUTH_EMULATOR_HOST,
   );
 }
 
 export function getFirebaseAdminApp(): App {
   if (getApps().length) return getApp();
   const serviceAccount = serviceAccountFromEnvironment();
+  if (process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+    return initializeApp({
+      projectId: process.env.GCLOUD_PROJECT ?? "olaf-emulator",
+      storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    });
+  }
   return initializeApp({
     credential: serviceAccount
       ? cert(serviceAccount)

@@ -6,6 +6,7 @@ import { apiError } from "@/lib/server/http";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
+  experimentId: z.string().trim().min(1),
   code: z
     .string()
     .trim()
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
     }
     const body = requestSchema.parse(await request.json());
     return Response.json(
-      await createParticipant(body, principal.uid),
+      await createParticipant(body, principal),
       { status: 201 },
     );
   } catch (error) {

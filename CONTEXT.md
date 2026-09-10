@@ -5,7 +5,7 @@ This context describes one participant's guided speaking study and the research 
 ## Language
 
 **Study Session**:
-One uninterrupted run through the Adventure Diary. A Study Restart ends the current Study Session and creates a linked new one.
+One uninterrupted run through the Adventure Diary for one Enrollment. A Study Restart ends the current Study Session and creates a linked new one; legacy sessions may remain unscoped until migration.
 _Avoid_: Browser session, login session, run record
 
 **Study Restart**:
@@ -27,3 +27,15 @@ _Avoid_: Phase, step
 **Attempt**:
 One submitted recording within a Page and Round. Attempt numbering restarts when the participant moves to another Round or begins a new Study Session.
 _Avoid_: Recording, retry, turn
+
+**Experiment Batch**:
+A versioned cohort and protocol boundary for one planned study run. It owns lifecycle, mode, consent/protocol snapshots, roster, allocation, and scoped exports.
+_Avoid_: Study Session, experiment run, class
+
+**Participant Account**:
+The Firebase Auth-backed login identity for a participant. An account can be enrolled in more than one Experiment Batch over time and does not permanently own a research group.
+_Avoid_: Enrollment, subject record
+
+**Enrollment**:
+The membership of one Participant Account in one Experiment Batch. Enrollment owns the participant code for that batch, class, group allocation, consent state, and batch-specific lifecycle status.
+_Avoid_: Participant Account, Study Session

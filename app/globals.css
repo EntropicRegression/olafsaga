@@ -2221,11 +2221,196 @@ input:focus-visible {
 }
 
 .participant-workspace,
-.settings-workspace {
+.settings-workspace,
+.experiment-workspace {
   display: grid;
   align-items: start;
   gap: 16px;
-  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  grid-template-columns: 1fr;
+}
+
+.experiment-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.experiment-toolbar__actions,
+.experiment-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.experiment-create-form {
+  display: grid;
+  gap: 14px;
+}
+
+.experiment-create-form label {
+  display: grid;
+  gap: 6px;
+  color: #4d6576;
+  font-size: 0.63rem;
+  font-weight: 800;
+}
+
+.experiment-create-form input,
+.experiment-create-form select,
+.experiment-enrollment-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d9e5ea;
+  border-radius: 8px;
+  padding: 9px 10px;
+  outline: 0;
+  background: #fbfdfd;
+  color: var(--navy);
+  font: inherit;
+}
+
+.experiment-create-form input:focus,
+.experiment-create-form select:focus,
+.experiment-enrollment-panel textarea:focus {
+  border-color: #70b7d2;
+  box-shadow: 0 0 0 3px rgba(68, 161, 197, 0.12);
+}
+
+.experiment-grid {
+  display: grid;
+  align-items: start;
+  gap: 16px;
+  grid-template-columns: minmax(230px, 0.45fr) minmax(0, 1fr);
+}
+
+.experiment-list {
+  display: grid;
+  gap: 6px;
+}
+
+.experiment-list__item {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--navy);
+  cursor: pointer;
+  text-align: left;
+}
+
+.experiment-list__item:hover,
+.experiment-list__item.is-active {
+  border-color: #cce3ed;
+  background: #f4fbfe;
+}
+
+.experiment-list__item span:not(.status-dot) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.experiment-list__item strong,
+.experiment-list__item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.experiment-list__item strong { font-size: 0.72rem; }
+.experiment-list__item small { color: #8a9ca7; font-size: 0.58rem; }
+.experiment-list__item b { color: #73909f; font-size: 0.55rem; text-transform: uppercase; }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aabb3;
+}
+.status-dot--draft { background: #e4a53a; }
+.status-dot--active { background: #36a979; }
+.status-dot--closed { background: #6f98b0; }
+.status-dot--archived { background: #a5afb5; }
+
+.experiment-detail {
+  min-height: 250px;
+}
+
+.experiment-detail .card-heading {
+  justify-content: space-between;
+}
+
+.experiment-detail .card-heading strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--navy);
+  font-size: 0.9rem;
+}
+
+.status-pill--draft { color: #8a5b12; background: #fff2d1; }
+.status-pill--active { color: #17724d; background: #e4f7ee; }
+.status-pill--closed { color: #315e77; background: #e6f1f6; }
+.status-pill--archived { color: #67757d; background: #eef1f3; }
+
+.experiment-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.experiment-facts div {
+  padding: 10px;
+  border: 1px solid #edf2f4;
+  border-radius: 9px;
+  background: #fbfdfd;
+}
+
+.experiment-facts dt { color: #8a9ca7; font-size: 0.55rem; font-weight: 800; text-transform: uppercase; }
+.experiment-facts dd { margin: 4px 0 0; color: var(--navy); font-size: 0.68rem; overflow-wrap: anywhere; }
+
+.experiment-hint,
+.experiment-detail__note,
+.experiment-enrollment-panel p {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #78909b;
+  font-size: 0.6rem;
+}
+
+.experiment-enrollment-panel {
+  display: grid;
+  gap: 9px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #edf2f4;
+}
+
+.experiment-enrollment-panel .card-heading { margin-bottom: 0; }
+.experiment-enrollment-panel .card-heading strong { font-size: 0.74rem; }
+.experiment-enrollment-panel .card-heading span { margin-left: auto; color: #8a9ca7; font-size: 0.58rem; }
+.experiment-enrollment-panel p { margin: 0; }
+.experiment-enrollment-panel textarea { min-height: 100px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.66rem; }
+.experiment-readiness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.experiment-readiness span {
+  border-radius: 999px;
+  padding: 5px 8px;
+  color: #607b89;
+  background: #f1f7f9;
+  font-size: 0.58rem;
 }
 
 .participant-side-stack,
@@ -2494,7 +2679,7 @@ input:focus-visible {
   gap: 10px;
   padding: 9px 0;
   border-bottom: 1px solid #edf2f4;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
 }
 
 .participant-list > div:not(.card-heading) > span {
@@ -3109,6 +3294,22 @@ input:focus-visible {
   text-decoration: none;
 }
 
+.participant-rotate-button {
+  white-space: nowrap;
+}
+
+.admin-export-scope {
+  max-width: 180px;
+  border: 1px solid #c8dfe9;
+  border-radius: 8px;
+  padding: 8px 9px;
+  background: #fff;
+  color: #315e77;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 @media (max-width: 1050px) {
   .metric-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -3120,12 +3321,23 @@ input:focus-visible {
   }
 
   .participant-workspace,
-  .settings-workspace {
+  .settings-workspace,
+  .experiment-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 760px) {
+  .experiment-toolbar,
+  .experiment-detail .card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .experiment-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .admin-shell {
     display: block;
   }

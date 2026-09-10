@@ -1,10 +1,11 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
-import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
-import { participantEmail } from "@/lib/auth/participant";
+import { adminBucket, adminDb } from "@/lib/firebase/admin";
 import { buildParticipantResearchExport } from "@/lib/study/research-export";
 import type { ExperimentGroup, NodeId } from "@/lib/study/types";
+import { createExperimentEnrollments } from "./experiment-enrollment";
+import type { Principal } from "./auth";
 import { HttpError } from "./http";
 
 const now = () => new Date().toISOString();
@@ -28,136 +29,89 @@ function normalizeParticipantRow(row: ParticipantImportRow): ParticipantImportRo
 }
 
 export async function createParticipant(
-  rawRow: ParticipantImportRow,
-  researcherId: string,
+  rawRow: ParticipantImportRow & { experimentId: string },
+  principal: Principal,
 ) {
   const row = normalizeParticipantRow(rawRow);
-  const email = participantEmail(row.code);
-  const existingProfile = await adminDb()
-    .collection("participants")
-    .where("code", "==", row.code)
-    .limit(1)
-    .get();
-  if (!existingProfile.empty) {
-    throw new HttpError(
-      `受試者代碼 ${row.code} 已存在；為避免覆寫密碼與分組，未建立帳號。`,
-      409,
-    );
-  }
-  try {
-    await adminAuth().getUserByEmail(email);
-    throw new HttpError(
-      `受試者代碼 ${row.code} 已存在；為避免覆寫密碼與分組，未建立帳號。`,
-      409,
-    );
-  } catch (error) {
-    if (error instanceof HttpError) throw error;
-    if ((error as { code?: string })?.code !== "auth/user-not-found") {
-      throw error;
-    }
-  }
-
-  const user = await adminAuth().createUser({
-    email,
-    password: row.password,
-    emailVerified: true,
-    displayName: row.code,
-  });
-  try {
-    const createdAt = now();
-    await adminDb().collection("participants").doc(user.uid).create({
-      code: row.code,
-      classId: row.classId,
-      role: "student",
-      group: null,
-      consentVersion: row.consentVersion,
-      consentedAt: row.consentedAt,
-      createdBy: researcherId,
-      createdAt,
-      updatedAt: createdAt,
-    });
-    await adminDb().collection("auditLogs").add({
-      action: "participant.created",
-      participantId: user.uid,
+  const result = await createExperimentEnrollments(
+    principal,
+    rawRow.experimentId,
+    [{
       participantCode: row.code,
       classId: row.classId,
-      researcherId,
-      createdAt,
-    });
-    return {
-      uid: user.uid,
-      code: row.code,
-      classId: row.classId,
       consentVersion: row.consentVersion,
       consentedAt: row.consentedAt,
-      group: null,
-    };
-  } catch (error) {
-    await adminAuth().deleteUser(user.uid).catch(() => undefined);
-    throw error;
-  }
+    }],
+    undefined,
+    {
+      passwordByCode: { [row.code]: row.password },
+      auditAction: "experiment.participants_generated",
+    },
+  );
+  const enrollment = result.enrollments[0];
+  return {
+    uid: enrollment.participantId,
+    code: enrollment.participantCode,
+    classId: enrollment.classId,
+    consentVersion: enrollment.consentVersion,
+    consentedAt: enrollment.consentedAt,
+    group: enrollment.group,
+    experimentId: enrollment.experimentId,
+  };
 }
 
 export async function importParticipants(
   rows: ParticipantImportRow[],
   researcherId: string,
 ) {
-  const results: Array<{ code: string; uid?: string; error?: string }> = [];
-  for (const rawRow of rows) {
-    const row = normalizeParticipantRow(rawRow);
-    try {
-      const email = participantEmail(row.code);
-      let user;
-      try {
-        user = await adminAuth().getUserByEmail(email);
-        await adminAuth().updateUser(user.uid, {
-          password: row.password,
-          disabled: false,
-        });
-      } catch {
-        user = await adminAuth().createUser({
-          email,
-          password: row.password,
-          emailVerified: true,
-          displayName: row.code,
-        });
-      }
-      await adminDb().collection("participants").doc(user.uid).set(
-        {
-          code: row.code,
-          classId: row.classId,
-          role: "student",
-          group: null,
-          consentVersion: row.consentVersion,
-          consentedAt: row.consentedAt,
-          updatedAt: now(),
-        },
-        { merge: true },
-      );
-      results.push({ code: row.code, uid: user.uid });
-    } catch (error) {
-      results.push({
-        code: row.code,
-        error: error instanceof Error ? error.message : "Import failed.",
-      });
-    }
-  }
-  await adminDb().collection("auditLogs").add({
-    action: "participants.imported",
-    researcherId,
-    count: rows.length,
-    succeeded: results.filter((result) => result.uid).length,
-    createdAt: now(),
-  });
-  return results;
+  void rows;
+  void researcherId;
+  throw new HttpError(
+    "Legacy participant import is disabled. Import a roster through an Experiment Batch instead.",
+    410,
+  );
 }
 
-export async function getAdminOverview() {
+export type OverviewScopeMode = "formal" | "test" | "all";
+
+export async function getAdminOverview(
+  experimentId?: string,
+  mode: OverviewScopeMode = "formal",
+) {
   const db = adminDb();
+  let scopedExperimentIds: Set<string> | null = null;
+  if (experimentId) {
+    const experimentSnapshot = await db.collection("experiments").doc(experimentId).get();
+    if (!experimentSnapshot.exists) {
+      throw new HttpError("Experiment was not found.", 404);
+    }
+    scopedExperimentIds = new Set([experimentId]);
+  } else if (mode !== "all") {
+    const experimentSnapshot = await db.collection("experiments").get();
+    scopedExperimentIds = new Set(
+      experimentSnapshot.docs
+        .filter((doc) => doc.data().mode === mode)
+        .map((doc) => doc.id),
+    );
+  }
+  const enrollmentSnapshots = scopedExperimentIds
+    ? await Promise.all(
+        [...scopedExperimentIds].map((id) =>
+          db.collection("experiments").doc(id).collection("enrollments").get(),
+        ),
+      )
+    : [];
+  const participantIds = scopedExperimentIds
+    ? new Set(
+        enrollmentSnapshots.flatMap((snapshot) =>
+          snapshot.docs.map((doc) => String(doc.data().participantId)),
+        ),
+      )
+    : null;
   const [participantsSnapshot, sessionsSnapshot, attemptsSnapshot] =
     await Promise.all([
       db.collection("participants").where("role", "==", "student").limit(500).get(),
-      db.collection("sessions").orderBy("updatedAt", "desc").limit(200).get(),
+      db.collection("sessions").orderBy("updatedAt", "desc").limit(1000).get(),
       db.collectionGroup("attempts").orderBy("updatedAt", "desc").limit(1000).get(),
     ]);
 
@@ -165,13 +119,17 @@ export async function getAdminOverview() {
     participantsSnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
-    }));
-  const sessions: Array<Record<string, unknown>> = sessionsSnapshot.docs.map(
-    (doc) => ({
+    })).filter((participant) => !participantIds || participantIds.has(participant.id));
+  const sessions: Array<Record<string, unknown>> = sessionsSnapshot.docs
+    .filter(
+      (doc) =>
+        !scopedExperimentIds ||
+        scopedExperimentIds.has(String(doc.data().experimentId ?? "")),
+    )
+    .map((doc) => ({
       id: doc.id,
       ...doc.data(),
-    }),
-  );
+    }));
   const attempts: Array<Record<string, unknown>> = attemptsSnapshot.docs.map(
     (doc) => ({
       id: doc.id,
@@ -183,6 +141,10 @@ export async function getAdminOverview() {
   const studyRoots = new Set(
     sessions.map((session) => String(session.rootSessionId ?? session.id)),
   );
+  const sessionIds = new Set(sessions.map((session) => session.id));
+  const scopedAttempts = scopedExperimentIds
+    ? attempts.filter((attempt) => sessionIds.has(String(attempt.sessionId)))
+    : attempts;
   const completedRoots = new Set(
     completed.map((session) => String(session.rootSessionId ?? session.id)),
   );
@@ -198,7 +160,7 @@ export async function getAdminOverview() {
     },
     { agent1: 0, agent2: 0 },
   );
-  const decisionCounts = attempts.reduce<Record<string, number>>(
+  const decisionCounts = scopedAttempts.reduce<Record<string, number>>(
     (counts, attempt) => {
       const decision = String(attempt.decision ?? "PENDING");
       counts[decision] = (counts[decision] ?? 0) + 1;
@@ -207,7 +169,7 @@ export async function getAdminOverview() {
     {},
   );
   const nodeStats = ([1, 2, 3, 4, 5] as NodeId[]).map((nodeId) => {
-    const nodeAttempts = attempts.filter(
+      const nodeAttempts = scopedAttempts.filter(
       (attempt) => Number(attempt.nodeId) === nodeId,
     );
     const passed = nodeAttempts.filter((attempt) => attempt.status === "passed");
@@ -244,9 +206,9 @@ export async function getAdminOverview() {
       completionRate: studyRoots.size
         ? Math.round((completedRoots.size / studyRoots.size) * 100)
         : 0,
-      attempts: attempts.length,
+      attempts: scopedAttempts.length,
       estimatedAudioGb: Number(
-        ((attempts.length * 0.64) / 1024).toFixed(2),
+        ((scopedAttempts.length * 0.64) / 1024).toFixed(2),
       ),
     },
     groupCounts,
@@ -310,9 +272,18 @@ export async function addResearchNote(
   return { id: noteRef.id, text, researcherId, createdAt };
 }
 
-export async function createResearchExport(researcherId: string) {
+export async function createResearchExport(
+  researcherId: string,
+  experimentId: string,
+) {
   const db = adminDb();
   const exportId = `export-${Date.now()}-${randomBytes(3).toString("hex")}`;
+  const experimentSnapshot = await db.collection("experiments").doc(experimentId).get();
+  if (!experimentSnapshot.exists) throw new HttpError("Experiment was not found.", 404);
+  const experimentCode = String(experimentSnapshot.data()?.code ?? experimentId);
+  const enrollmentSnapshot = await experimentSnapshot.ref.collection("enrollments").get();
+  const enrollmentDocuments: Array<Record<string, unknown> & { id: string }> =
+    enrollmentSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   const [
     participants,
     sessions,
@@ -323,13 +294,17 @@ export async function createResearchExport(researcherId: string) {
     researchNotes,
   ] = await Promise.all([
     db.collection("participants").where("role", "==", "student").get(),
-    db.collection("sessions").get(),
+    db.collection("sessions").where("experimentId", "==", experimentId).get(),
     db.collectionGroup("attempts").get(),
     db.collection("studyRestarts").get(),
     db.collectionGroup("messages").get(),
     db.collectionGroup("entries").get(),
     db.collectionGroup("researchNotes").get(),
   ]);
+  const sessionIds = new Set(sessions.docs.map((doc) => doc.id));
+  const scopedParticipantIds = new Set(
+    enrollmentDocuments.map((enrollment) => String(enrollment.participantId)),
+  );
   const mapDocuments = (
     snapshots: FirebaseFirestore.QuerySnapshot,
   ): Array<Record<string, unknown> & { id: string }> =>
@@ -342,18 +317,43 @@ export async function createResearchExport(researcherId: string) {
       id: doc.id,
       sessionId: doc.ref.parent.parent?.id ?? "",
     }));
+  const participantDocuments = mapDocuments(participants).filter((participant) =>
+    scopedParticipantIds.has(participant.id),
+  );
+  if (scopedParticipantIds) {
+    for (const enrollment of enrollmentDocuments) {
+      if (participantDocuments.some((participant) => participant.id === enrollment.participantId)) continue;
+      participantDocuments.push({
+        id: String(enrollment.participantId),
+        code: enrollment.participantCode,
+        classId: enrollment.classId,
+        group: enrollment.group,
+        consentVersion: enrollment.consentVersion,
+        consentedAt: enrollment.consentedAt,
+        experimentId,
+        enrollmentId: enrollment.id,
+      });
+    }
+  }
+  const filterBySession = <T extends { sessionId: string }>(documents: T[]) =>
+    documents.filter((document) => sessionIds.has(document.sessionId));
   const exportedAt = now();
   const artifacts = buildParticipantResearchExport(
     {
-      participants: mapDocuments(participants),
+      participants: participantDocuments,
       sessions: mapDocuments(sessions),
-      attempts: mapSessionDocuments(attempts),
-      restarts: mapDocuments(restarts),
-      messages: mapSessionDocuments(messages),
-      worksheets: mapSessionDocuments(worksheets),
-      researchNotes: mapSessionDocuments(researchNotes),
+      attempts: filterBySession(mapSessionDocuments(attempts)),
+      restarts: mapDocuments(restarts).filter((restart) =>
+        restart.experimentId === experimentId ||
+        sessionIds.has(String(restart.fromSessionId)) ||
+        sessionIds.has(String(restart.toSessionId)),
+      ),
+      messages: filterBySession(mapSessionDocuments(messages)),
+      worksheets: filterBySession(mapSessionDocuments(worksheets)),
+      researchNotes: filterBySession(mapSessionDocuments(researchNotes)),
     },
     exportedAt,
+    { experimentId, experimentCode },
   );
 
   const prefix = `exports/${exportId}`;
@@ -394,14 +394,18 @@ export async function createResearchExport(researcherId: string) {
     attemptCount: artifacts.attemptCount,
     restartCount: artifacts.restartCount,
     audioIncluded: false,
+    experimentId,
+    experimentCode,
     createdAt: exportedAt,
   });
   await db.collection("auditLogs").add({
-    action: "export.created",
+    action: "experiment.export_created",
     researcherId,
     exportId,
     schemaVersion: "participant-research-export-v1",
     audioIncluded: false,
+    experimentId,
+    experimentCode,
     createdAt: exportedAt,
   });
   return {

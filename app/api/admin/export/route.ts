@@ -4,9 +4,14 @@ import {
 } from "@/lib/server/admin";
 import { requireResearcher } from "@/lib/server/auth";
 import { apiError } from "@/lib/server/http";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+const exportSchema = z.object({
+  experimentId: z.string().trim().min(1),
+});
 
 export async function GET(request: Request) {
   try {
@@ -36,7 +41,9 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    return Response.json(await createResearchExport(principal.uid));
+    const body = await request.json().catch(() => ({}));
+    const { experimentId } = exportSchema.parse(body);
+    return Response.json(await createResearchExport(principal.uid, experimentId));
   } catch (error) {
     return apiError(error);
   }

@@ -26,6 +26,11 @@ export interface ParticipantResearchExportArtifacts {
   restartCount: number;
 }
 
+export interface ParticipantResearchExportMetadata {
+  experimentId?: string;
+  experimentCode?: string;
+}
+
 const SCHEMA_VERSION = "participant-research-export-v1";
 
 function asString(value: unknown): string {
@@ -79,6 +84,8 @@ function publicParticipant(
   return {
     id: participant.id,
     code: value("code") ?? value("participantCode") ?? "",
+    experimentId: value("experimentId") ?? null,
+    enrollmentId: value("enrollmentId") ?? null,
     classId: value("classId") ?? "",
     group: value("group") ?? null,
     consentVersion: value("consentVersion") ?? null,
@@ -134,6 +141,8 @@ function buildSummary(
   );
 
   return {
+    experimentId: asString(participant.experimentId),
+    enrollmentId: asString(participant.enrollmentId),
     participantCode: asString(participant.code),
     classId: asString(participant.classId),
     group: asString(participant.group) || "unassigned",
@@ -170,6 +179,7 @@ function buildSummary(
 export function buildParticipantResearchExport(
   source: ParticipantResearchExportSource,
   exportedAt: string,
+  metadata: ParticipantResearchExportMetadata = {},
 ): ParticipantResearchExportArtifacts {
   const sessionsByParticipant = new Map<string, ResearchDocument[]>();
   for (const session of source.sessions) {
@@ -264,6 +274,8 @@ export function buildParticipantResearchExport(
     );
 
   const summaryHeaders = [
+    "experimentId",
+    "enrollmentId",
     "participantCode",
     "classId",
     "group",
@@ -306,6 +318,8 @@ export function buildParticipantResearchExport(
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
     exportedAt,
+    ...(metadata.experimentId ? { experimentId: metadata.experimentId } : {}),
+    ...(metadata.experimentCode ? { experimentCode: metadata.experimentCode } : {}),
     format: "one JSON object per participant per line",
     participantCount: records.length,
     sessionCount: source.sessions.length,

@@ -6,6 +6,8 @@ import type { ExperimentGroup } from "@/lib/study/types";
 export interface Principal {
   uid: string;
   code: string;
+  experimentId?: string;
+  enrollmentId?: string;
   classId: string;
   role: "student" | "researcher";
   group: ExperimentGroup | null;
@@ -35,6 +37,8 @@ function demoPrincipal(request: Request): Principal | null {
   return {
     uid: `demo-${demoCode.toLowerCase()}`,
     code: demoCode,
+    experimentId: "demo-batch-001",
+    enrollmentId: `demo-enrollment-${demoCode.toLowerCase()}`,
     classId: "demo-class",
     role: isResearcher ? "researcher" : "student",
     group: demoCode.endsWith("2") ? "agent2" : "agent1",
@@ -65,6 +69,8 @@ export async function requirePrincipal(request: Request): Promise<Principal> {
   return {
     uid: decoded.uid,
     code: String(data.code ?? ""),
+    experimentId: data.activeExperimentId ? String(data.activeExperimentId) : undefined,
+    enrollmentId: data.activeEnrollmentId ? String(data.activeEnrollmentId) : undefined,
     classId: String(data.classId ?? ""),
     role: data.role === "researcher" ? "researcher" : "student",
     group:

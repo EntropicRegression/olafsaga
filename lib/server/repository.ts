@@ -48,6 +48,8 @@ function toSession(id: string, data: FirebaseFirestore.DocumentData): StudySessi
     id,
     participantId: String(data.participantId),
     participantCode: String(data.participantCode),
+    experimentId: data.experimentId ? String(data.experimentId) : undefined,
+    enrollmentId: data.enrollmentId ? String(data.enrollmentId) : undefined,
     group: data.group as ExperimentGroup,
     classId: String(data.classId),
     nodeId: Number(data.nodeId) as NodeId,
@@ -74,6 +76,19 @@ function toSession(id: string, data: FirebaseFirestore.DocumentData): StudySessi
     startedAt: String(data.startedAt),
     updatedAt: String(data.updatedAt),
   };
+}
+
+function assertSessionAccess(principal: Principal, session: StudySession): void {
+  if (session.participantId !== principal.uid && principal.role !== "researcher") {
+    throw new AuthError("This session belongs to another participant.", 403);
+  }
+  if (
+    principal.role !== "researcher" &&
+    (session.experimentId !== principal.experimentId ||
+      session.enrollmentId !== principal.enrollmentId)
+  ) {
+    throw new AuthError("This session is outside the participant's active enrollment.", 403);
+  }
 }
 
 async function assignGroup(principal: Principal): Promise<ExperimentGroup> {
@@ -131,13 +146,56 @@ async function assignGroup(principal: Principal): Promise<ExperimentGroup> {
 export async function getOrCreateSession(
   principal: Principal,
 ): Promise<StudySession> {
-  if (!principal.consentVersion) {
-    throw new AuthError("Research consent is required.", 403);
-  }
-  const group = await assignGroup(principal);
-  const activeConfig = await getActiveStudyConfig();
   const db = adminDb();
   const participantRef = db.collection("participants").doc(principal.uid);
+
+  let experimentId = principal.experimentId;
+  let enrollmentId = principal.enrollmentId;
+  let enrollmentGroup: ExperimentGroup | undefined;
+  let enrollmentClassId = principal.classId;
+  let enrollmentCode = principal.code;
+  let configVersion: string;
+  let vocabularyVersion: string;
+  let thresholds: StudySession["thresholds"];
+
+  if (experimentId && enrollmentId) {
+    const [experimentSnapshot, enrollmentSnapshot] = await Promise.all([
+      db.collection("experiments").doc(experimentId).get(),
+      db.collection("experiments").doc(experimentId).collection("enrollments").doc(enrollmentId).get(),
+    ]);
+    if (!experimentSnapshot.exists || experimentSnapshot.data()?.status !== "active") {
+      throw new AuthError("The participant's experiment is not active.", 403);
+    }
+    if (!enrollmentSnapshot.exists) {
+      throw new AuthError("The participant's enrollment was not found.", 403);
+    }
+    const enrollment = enrollmentSnapshot.data()!;
+    if (String(enrollment.participantId ?? "") !== principal.uid) {
+      throw new AuthError("This enrollment belongs to another participant.", 403);
+    }
+    if (!["issued", "started"].includes(String(enrollment.status))) {
+      throw new AuthError("This enrollment is not available for a new study session.", 403);
+    }
+    enrollmentGroup = enrollment.group as ExperimentGroup;
+    enrollmentClassId = String(enrollment.classId);
+    enrollmentCode = String(enrollment.participantCode);
+    const experiment = experimentSnapshot.data()!;
+    configVersion = String(experiment.configVersion);
+    vocabularyVersion = String(experiment.vocabularyVersion);
+    thresholds = resolveStudyThresholds(experiment.thresholds);
+  } else {
+    experimentId = undefined;
+    enrollmentId = undefined;
+    const activeConfig = await getActiveStudyConfig();
+    configVersion = activeConfig.configVersion;
+    vocabularyVersion = activeConfig.vocabularyVersion;
+    thresholds = activeConfig.thresholds;
+  }
+
+  if (!principal.consentVersion && !enrollmentId) {
+    throw new AuthError("Research consent is required.", 403);
+  }
+  const group = enrollmentGroup ?? (await assignGroup(principal));
 
   const participantSnap = await participantRef.get();
   const activeSessionId = participantSnap.data()?.activeSessionId as
@@ -149,7 +207,8 @@ export async function getOrCreateSession(
       existing.exists &&
       ["active", "awaiting_confirmation"].includes(
         String(existing.data()?.status),
-      )
+      ) &&
+      (!experimentId || String(existing.data()?.experimentId ?? "") === experimentId)
     ) {
       return toSession(existing.id, existing.data()!);
     }
@@ -160,31 +219,47 @@ export async function getOrCreateSession(
   const session: StudySession = {
     id: sessionRef.id,
     participantId: principal.uid,
-    participantCode: principal.code,
+    participantCode: enrollmentCode,
+    ...(experimentId ? { experimentId } : {}),
+    ...(enrollmentId ? { enrollmentId } : {}),
     group,
-    classId: principal.classId,
+    classId: enrollmentClassId,
     nodeId: 1,
     round: "plot",
     attemptNumber: 1,
     status: "active",
     rootSessionId: sessionRef.id,
     restartIndex: 0,
-    configVersion: activeConfig.configVersion,
-    vocabularyVersion: activeConfig.vocabularyVersion,
-    thresholds: activeConfig.thresholds,
+    configVersion,
+    vocabularyVersion,
+    thresholds,
     startedAt,
     updatedAt: startedAt,
   };
 
   const batch = db.batch();
-  batch.set(sessionRef, session);
+  batch.set(sessionRef, withoutUndefinedProperties(session));
   batch.set(
     participantRef,
-    { activeSessionId: session.id, lastActiveAt: startedAt },
+    {
+      activeSessionId: session.id,
+      lastActiveAt: startedAt,
+      ...(experimentId ? { activeExperimentId: experimentId } : {}),
+      ...(enrollmentId ? { activeEnrollmentId: enrollmentId } : {}),
+    },
     { merge: true },
   );
+  if (experimentId && enrollmentId) {
+    batch.set(
+      db.collection("experiments").doc(experimentId).collection("enrollments").doc(enrollmentId),
+      { status: "started", startedAt, updatedAt: startedAt },
+      { merge: true },
+    );
+  }
   getOpeningMessages().forEach((message, sequence) => {
     batch.set(sessionRef.collection("messages").doc(), {
+      ...(experimentId ? { experimentId } : {}),
+      ...(enrollmentId ? { enrollmentId } : {}),
       role: "olaf",
       text: message.text,
       templateId: message.id,
@@ -218,9 +293,7 @@ export async function createAttempt(
   const sessionSnap = await sessionRef.get();
   if (!sessionSnap.exists) throw new AuthError("Session was not found.", 404);
   const session = toSession(sessionSnap.id, sessionSnap.data()!);
-  if (session.participantId !== principal.uid) {
-    throw new AuthError("This session belongs to another participant.", 403);
-  }
+  assertSessionAccess(principal, session);
   if (session.status !== "active") {
     throw new AuthError("The worksheet must be confirmed before recording.", 409);
   }
@@ -229,7 +302,9 @@ export async function createAttempt(
   const storagePath = `audio/${principal.uid}/${sessionId}/${session.nodeId}-${session.round}-${attemptRef.id}.wav`;
   await attemptRef.set({
     participantId: principal.uid,
-    participantCode: principal.code,
+    participantCode: session.participantCode,
+    ...(session.experimentId ? { experimentId: session.experimentId } : {}),
+    ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
     classId: session.classId,
     group: session.group,
     nodeId: session.nodeId,
@@ -259,12 +334,9 @@ export async function getAttempt(
     .doc(attemptId);
   const snapshot = await ref.get();
   if (!snapshot.exists) throw new AuthError("Attempt was not found.", 404);
-  if (
-    snapshot.data()?.participantId !== principal.uid &&
-    principal.role !== "researcher"
-  ) {
-    throw new AuthError("This attempt belongs to another participant.", 403);
-  }
+  const sessionSnapshot = await ref.parent.parent?.get();
+  if (!sessionSnapshot?.exists) throw new AuthError("Session was not found.", 404);
+  assertSessionAccess(principal, toSession(sessionSnapshot.id, sessionSnapshot.data()!));
   return {
     ref,
     id: snapshot.id,
@@ -278,13 +350,9 @@ export async function getSession(
 ): Promise<StudySession> {
   const snapshot = await adminDb().collection("sessions").doc(sessionId).get();
   if (!snapshot.exists) throw new AuthError("Session was not found.", 404);
-  if (
-    snapshot.data()?.participantId !== principal.uid &&
-    principal.role !== "researcher"
-  ) {
-    throw new AuthError("This session belongs to another participant.", 403);
-  }
-  return toSession(snapshot.id, snapshot.data()!);
+  const session = toSession(snapshot.id, snapshot.data()!);
+  assertSessionAccess(principal, session);
+  return session;
 }
 
 export async function getAttemptCompletion(
@@ -357,22 +425,23 @@ export async function markAttemptTechnicalFailure(
   failure: TechnicalFailure,
   technicalDetail: unknown,
 ): Promise<void> {
+  const detail = normalizeTechnicalDetail(technicalDetail);
   await adminDb()
     .collection("sessions")
     .doc(sessionId)
     .collection("attempts")
     .doc(attemptId)
     .set(
-      {
+      withoutUndefinedProperties({
         status: "technical_error",
         transcript: input.transcript,
         durationMs: input.durationMs,
         speechScores: input.speechScores,
-        technicalError: normalizeTechnicalDetail(technicalDetail),
+        technicalError: detail,
         technicalErrorCode: failure.code,
         technicalFailure: failure,
         updatedAt: now(),
-      },
+      }),
       { merge: true },
     );
 }
@@ -476,6 +545,8 @@ export async function finalizeAttempt(
         .collection("entries")
         .doc(String(input.nodeId));
       transaction.set(worksheetRef, {
+        ...(session.experimentId ? { experimentId: session.experimentId } : {}),
+        ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
         nodeId: input.nodeId,
         storySummary: result.forcedAdvance
           ? ""
@@ -512,6 +583,8 @@ export async function finalizeAttempt(
     );
     transaction.update(sessionRef, sessionPatch);
     transaction.set(sessionRef.collection("messages").doc(), {
+      ...(session.experimentId ? { experimentId: session.experimentId } : {}),
+      ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
       role: "student",
       text: input.transcript,
       nodeId: input.nodeId,
@@ -521,6 +594,8 @@ export async function finalizeAttempt(
       createdAt: timestamp,
     });
     transaction.set(sessionRef.collection("messages").doc(), {
+      ...(session.experimentId ? { experimentId: session.experimentId } : {}),
+      ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
       role: "olaf",
       text: result.reply,
       templateId: result.replyTemplateId,
@@ -533,8 +608,8 @@ export async function finalizeAttempt(
     });
 
     if (restartPlan) {
-      transaction.set(nextSessionRef, restartPlan.nextSession);
-      transaction.set(restartRef, restartPlan.restart);
+      transaction.set(nextSessionRef, withoutUndefinedProperties(restartPlan.nextSession));
+      transaction.set(restartRef, withoutUndefinedProperties(restartPlan.restart));
       transaction.set(
         db.collection("participants").doc(principal.uid),
         {
@@ -546,6 +621,8 @@ export async function finalizeAttempt(
       );
       getOpeningMessages().forEach((message, sequence) => {
         transaction.set(nextSessionRef.collection("messages").doc(), {
+          ...(session.experimentId ? { experimentId: session.experimentId } : {}),
+          ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
           role: "olaf",
           text: message.text,
           templateId: message.id,
@@ -611,9 +688,23 @@ export async function confirmWorksheet(
     if (completed) {
       transaction.set(
         db.collection("participants").doc(principal.uid),
-        { activeSessionId: FieldValue.delete(), lastCompletedAt: updatedAt },
+        {
+          activeSessionId: FieldValue.delete(),
+          activeExperimentId: FieldValue.delete(),
+          activeEnrollmentId: FieldValue.delete(),
+          lastCompletedAt: updatedAt,
+        },
         { merge: true },
       );
+      const experimentId = String(sessionSnap.data()?.experimentId ?? "");
+      const enrollmentId = String(sessionSnap.data()?.enrollmentId ?? "");
+      if (experimentId && enrollmentId) {
+        transaction.set(
+          db.collection("experiments").doc(experimentId).collection("enrollments").doc(enrollmentId),
+          { status: "completed", completedAt: updatedAt, updatedAt },
+          { merge: true },
+        );
+      }
     }
     return toSession(sessionSnap.id, {
       ...sessionSnap.data()!,

@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "test": "vitest run --configLoader runner",
     "test:watch": "vitest --configLoader runner",
+    "test:emulator": "powershell -ExecutionPolicy Bypass -File scripts/run-emulator-tests.ps1",
     "typecheck": "tsc --noEmit",
     "bootstrap:researcher": "node scripts/create-researcher.mjs"
   },

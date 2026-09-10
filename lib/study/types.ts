@@ -3,6 +3,17 @@ import type { TechnicalFailure, TechnicalFailureCode } from "./technical-failure
 export type ExperimentGroup = "agent1" | "agent2";
 export type RoundType = "plot" | "feeling";
 export type NodeId = 1 | 2 | 3 | 4 | 5;
+export type ExperimentMode = "test" | "formal";
+export type ExperimentBatchStatus =
+  | "draft"
+  | "active"
+  | "closed"
+  | "archived";
+export type EnrollmentStatus =
+  | "issued"
+  | "started"
+  | "completed"
+  | "disabled";
 
 export type AttemptStatus =
   | "created"
@@ -118,6 +129,8 @@ export interface StudySession {
   id: string;
   participantId: string;
   participantCode: string;
+  experimentId?: string;
+  enrollmentId?: string;
   group: ExperimentGroup;
   classId: string;
   nodeId: NodeId;
@@ -150,6 +163,8 @@ export interface StudyRestart {
   id: string;
   participantId: string;
   participantCode: string;
+  experimentId?: string;
+  enrollmentId?: string;
   classId: string;
   group: ExperimentGroup;
   rootSessionId: string;
@@ -165,9 +180,60 @@ export interface AttemptCompletion {
   restart?: StudyRestart;
 }
 
+export interface ExperimentBatch {
+  id: string;
+  code: string;
+  name: string;
+  mode: ExperimentMode;
+  status: ExperimentBatchStatus;
+  configVersion: string;
+  vocabularyVersion: string;
+  thresholds: StudyThresholds;
+  consentVersion: string;
+  allocationMethod: "permuted-block-4-6";
+  participantCodePrefix: string;
+  rosterSize: number;
+  createdAt: string;
+  createdBy: string;
+  activatedAt?: string;
+  activatedBy?: string;
+  closedAt?: string;
+  closedBy?: string;
+}
+
+export interface Enrollment {
+  id: string;
+  experimentId: string;
+  participantId: string;
+  participantCode: string;
+  classId: string;
+  group: ExperimentGroup;
+  status: EnrollmentStatus;
+  allocationBlockId: string;
+  allocationPosition: number;
+  allocationMethod: "permuted-block-4-6";
+  consentVersion: string;
+  consentedAt: string;
+  credentialsIssuedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface ExperimentClassAllocation {
+  id: string;
+  experimentId: string;
+  classId: string;
+  allocationQueue: ExperimentGroup[];
+  nextBlockNumber: number;
+  allocatedCount: number;
+  updatedAt: string;
+}
+
 export interface Participant {
   id: string;
   code: string;
+  activeExperimentId?: string;
+  activeEnrollmentId?: string;
   classId: string;
   group: ExperimentGroup;
   role: "student" | "researcher";
