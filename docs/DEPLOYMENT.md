@@ -1,6 +1,6 @@
 # 部署執行與工具安裝手冊（部署負責人用）
 
-> 如果你是 Firebase、Azure、Cloud Run emotion2vec 或 WAV ZIP 的資源負責人，請改看 [雲端資源開通與交付規格](RESOURCE-HANDOFF.md)。該文件會告訴你要建立什麼，以及最後必須交給部署負責人的資料。
+> 如果你是 Firebase、Azure 或 Cloud Run emotion2vec 的資源負責人，請改看 [雲端資源開通與交付規格](RESOURCE-HANDOFF.md)。WAV ZIP 匯出已停用；相關舊段落僅供既有部署清理時參考。
 
 本手冊以 Windows 電腦、PowerShell、GitHub 與 Vercel 為例。照順序完成即可，不需要先懂程式。
 

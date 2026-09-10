@@ -21,7 +21,7 @@ import {
   assertAudioUploaded,
   finalizeAttempt,
   getAttempt,
-  getSession,
+  getAttemptCompletion,
   markAttemptAnalyzing,
   markAttemptTechnicalFailure,
 } from "@/lib/server/repository";
@@ -77,9 +77,14 @@ export async function POST(
     ].includes(String(attempt.status)) ||
       (attempt.status === "technical_error" && !retryableTechnicalFailure);
     if (terminal) {
+      const completion = await getAttemptCompletion(
+        principal,
+        body.sessionId,
+        attempt,
+      );
       return Response.json({
         result: attempt,
-        session: await getSession(principal, body.sessionId),
+        ...completion,
         idempotent: true,
       });
     }
@@ -103,8 +108,8 @@ export async function POST(
     if (body.technicalError) {
       await markAttemptAnalyzing(body.sessionId, attemptId, input);
       const result = evaluateAttempt(input, {}, thresholds);
-      const session = await finalizeAttempt(principal, input, result);
-      return Response.json({ result, session });
+      const completion = await finalizeAttempt(principal, input, result);
+      return Response.json({ result, ...completion });
     }
 
     await assertAudioUploaded(String(attempt.storagePath));
@@ -125,8 +130,8 @@ export async function POST(
             )
           : null;
       const result = evaluateAttempt(input, { semantic, emotion }, thresholds);
-      const session = await finalizeAttempt(principal, input, result);
-      return Response.json({ result, session });
+      const completion = await finalizeAttempt(principal, input, result);
+      return Response.json({ result, ...completion });
     } catch (providerError) {
       const normalizedError =
         providerError instanceof TechnicalFailureError

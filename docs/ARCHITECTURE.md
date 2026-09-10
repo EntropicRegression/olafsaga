@@ -11,9 +11,6 @@ flowchart LR
   V --> AO[Azure OpenAI]
   V -->|authenticated request| E[Cloud Run emotion2vec]
   E -->|read WAV| S
-  V -->|launch job| J[Cloud Run WAV export job]
-  J --> F
-  J --> S
 ```
 
 WAV 不經過 Vercel Function。瀏覽器先取得嘗試與唯一 Storage 路徑，直接上傳成功後才呼叫分析 API；`attemptId` 是所有完成請求的冪等鍵。
@@ -27,12 +24,13 @@ active/plot
   ├─ technical_error ────────────────> active/plot（不計次）
   ├─ failed attempt 1–2 ─────────────> active/plot（+1）
   ├─ passed ─────────────────────────> active/feeling
-  └─ failed attempt 3 ───────────────> active/feeling（forced_advance）
+  └─ failed attempt 3 ───────────────> restarted → new session/Page 1/plot
 
 active/feeling
   ├─ technical_error ────────────────> active/feeling（不計次）
   ├─ failed attempt 1–2 ─────────────> active/feeling（+1）
-  └─ passed / forced_advance ────────> awaiting_confirmation
+  ├─ failed attempt 3 ───────────────> restarted → new session/Page 1/plot
+  └─ passed ─────────────────────────> awaiting_confirmation
                                          ├─ retry → active/feeling
                                          └─ confirm → next plot / completed
 ```
@@ -57,7 +55,7 @@ Agent 2 另外要求目標情緒在 emotion2vec 前二名且分數至少 0.30，
 | `/api/admin/audio` | GET/DELETE | 五分鐘播放連結／具稽核刪除 |
 | `/api/admin/participants/import` | POST | 批次建立或重設帳號 |
 | `/api/admin/config/vocabulary` | GET/POST | 查詢／發布不可變詞表 |
-| `/api/admin/export` | POST/GET | 建立資料匯出／查詢 WAV ZIP |
+| `/api/admin/export` | POST/GET | 建立／重新取得每位受試者的研究資料匯出 |
 
 所有正式 API 都驗證 Firebase ID token。研究者 API 另查驗 `participants/{uid}.role == "researcher"`，不信任前端選擇的角色。
 
@@ -74,6 +72,16 @@ Agent 2 另外要求目標情緒在 emotion2vec 前二名且分數至少 0.30，
 - `auditLogs`、`exports`：敏感操作及匯出狀態。
 
 瀏覽器對 Firestore 一律拒絕；Next.js 使用 Admin SDK 寫入。Storage 只允許登入學生建立自己的 `audio/{uid}/{sessionId}/*.wav`，並檢查 WAV MIME 與 2 MB 限制；讀取、覆寫、刪除均拒絕。
+
+## 研究資料匯出
+
+研究後台會將 Firestore 資料依受試者聚合，並建立三個五分鐘短效下載連結：
+
+- `participant-records.jsonl`：每行一位受試者，內含所有場次、重開始、嘗試、逐字稿、訊息、日記與研究註記。
+- `participant-summary.csv`：每位受試者一列，包含組別、完成狀態、通過率與平均語音／情緒分數，供分組比較。
+- `manifest.json`：匯出 schema、筆數、組別數量與納入／排除規則。
+
+匯出不包含 WAV、Storage 路徑、密碼或 Firebase 登入資料。技術錯誤保留在個別紀錄中，但不納入通過率分母。
 
 ## 失敗與恢復
 

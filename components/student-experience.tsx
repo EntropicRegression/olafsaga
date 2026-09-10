@@ -55,12 +55,17 @@ import {
 } from "@/lib/demo/store";
 import { encodeWav } from "@/lib/audio/wav";
 import { getNode } from "@/lib/study/config";
-import { getCompletionReply, getPrompt } from "@/lib/study/templates";
+import {
+  getCompletionReply,
+  getOpeningMessages,
+  getPrompt,
+} from "@/lib/study/templates";
 import type {
   AttemptResult,
   ChatMessage,
   NodeId,
   SpeechScores,
+  StudyRestart,
   StudySession,
   WorksheetEntry,
 } from "@/lib/study/types";
@@ -106,6 +111,24 @@ function message(
     createdAt: new Date().toISOString(),
     ...extras,
   };
+}
+
+function emptyWorksheet(): WorksheetEntry[] {
+  return ([1, 2, 3, 4, 5] as NodeId[]).map((nodeId) => ({
+    nodeId,
+    storySummary: "",
+    emotionWord: "",
+    status: "pending",
+  }));
+}
+
+function openingMessages(session: StudySession): ChatMessage[] {
+  return getOpeningMessages().map((template) =>
+    message("olaf", template.text, session, {
+      templateId: template.id,
+      toneHint: template.toneHint,
+    }),
+  );
 }
 
 function formatClock(totalSeconds: number) {
@@ -311,9 +334,17 @@ export function StudentExperience() {
       captured: CapturedRecording,
       result: AttemptResult,
       nextSession: StudySession,
+      restart?: StudyRestart,
     ) => {
       setFormalState((current) => {
         if (!current) return current;
+        if (restart) {
+          return {
+            session: nextSession,
+            messages: openingMessages(nextSession),
+            worksheet: emptyWorksheet(),
+          };
+        }
         const previousSession = current.session;
         const nextMessages = [
           ...current.messages,
@@ -436,6 +467,7 @@ export function StudentExperience() {
           const payload = await apiFetch<{
             result: AttemptResult;
             session: StudySession;
+            restart?: StudyRestart;
           }>(`/api/attempts/${reservation.id}/complete`, {
             method: "POST",
             body: JSON.stringify({
@@ -445,7 +477,12 @@ export function StudentExperience() {
               speechScores: captured.speechScores,
             }),
           });
-          appendFormalResult(captured, payload.result, payload.session);
+          appendFormalResult(
+            captured,
+            payload.result,
+            payload.session,
+            payload.restart,
+          );
           await deletePendingAudio(pendingId);
           setPendingUploads((count) => Math.max(0, count - 1));
         }
@@ -527,6 +564,7 @@ export function StudentExperience() {
             const payload = await apiFetch<{
               result: AttemptResult;
               session: StudySession;
+              restart?: StudyRestart;
             }>(`/api/attempts/${item.id}/complete`, {
               method: "POST",
               body: JSON.stringify({
@@ -544,9 +582,13 @@ export function StudentExperience() {
               },
               payload.result,
               payload.session,
+              payload.restart,
             );
             await deletePendingAudio(item.id);
-            setPendingUploads((count) => Math.max(0, count - 1));
+            setPendingUploads((count) =>
+              payload.restart ? 0 : Math.max(0, count - 1),
+            );
+            if (payload.restart) break;
           } catch (error) {
             queueFailed = true;
             const failure = failureFromError(

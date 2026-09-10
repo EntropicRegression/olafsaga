@@ -177,10 +177,10 @@ export function ResearchDashboard() {
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<{
     exportId: string;
-    csvUrl: string;
-    jsonUrl: string;
-    zipUrl?: string;
-    wavZip?: { status: string };
+    recordsUrl: string;
+    summaryUrl: string;
+    manifestUrl: string;
+    participantCount: number;
   } | null>(null);
 
   async function load() {
@@ -239,51 +239,20 @@ export function ResearchDashboard() {
     try {
       const payload = await apiFetch<{
         exportId: string;
-        jsonUrl: string;
-        csvUrl: string;
-        wavZip: { status: string };
+        recordsUrl: string;
+        summaryUrl: string;
+        manifestUrl: string;
+        participantCount: number;
       }>(
         "/api/admin/export",
         { method: "POST", body: "{}" },
       );
       setExportResult(payload);
       setNotice(
-        payload.wavZip.status === "queued"
-          ? "CSV／JSON 已建立；WAV ZIP 正在 Cloud Run 背景產生。"
-          : "CSV／JSON 的五分鐘下載連結已建立；本環境未設定 WAV ZIP job。",
+        `已依受試者整理 ${payload.participantCount} 筆完整紀錄；匯出包含逐字稿，不包含音檔。`,
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "匯出失敗。");
-    } finally {
-      setExporting(false);
-    }
-  }
-
-  async function checkZipExport() {
-    if (!exportResult) return;
-    setExporting(true);
-    try {
-      const payload = await apiFetch<{
-        wavZipStatus: string;
-        zipUrl?: string;
-        error?: string | null;
-      }>(
-        `/api/admin/export?exportId=${encodeURIComponent(exportResult.exportId)}`,
-      );
-      if (payload.zipUrl) {
-        setExportResult((current) =>
-          current ? { ...current, zipUrl: payload.zipUrl } : current,
-        );
-        setNotice("WAV ZIP 已完成；下載連結五分鐘內有效。");
-      } else {
-        setNotice(
-          payload.error
-            ? `WAV ZIP 失敗：${payload.error}`
-            : `WAV ZIP 狀態：${payload.wavZipStatus}`,
-        );
-      }
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "無法查詢 ZIP 狀態。");
     } finally {
       setExporting(false);
     }
@@ -461,21 +430,27 @@ export function ResearchDashboard() {
           {exportResult && (
             <div className="export-links">
               <strong>匯出 {exportResult.exportId}</strong>
-              <a href={exportResult.csvUrl} target="_blank" rel="noreferrer">
-                下載 CSV
+              <a
+                href={exportResult.recordsUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                下載每人完整紀錄
               </a>
-              <a href={exportResult.jsonUrl} target="_blank" rel="noreferrer">
-                下載 JSON
+              <a
+                href={exportResult.summaryUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                下載分組比較 CSV
               </a>
-              {exportResult.zipUrl ? (
-                <a href={exportResult.zipUrl} target="_blank" rel="noreferrer">
-                  下載 WAV ZIP
-                </a>
-              ) : exportResult.wavZip?.status === "queued" ? (
-                <button onClick={() => void checkZipExport()}>
-                  查詢 WAV ZIP
-                </button>
-              ) : null}
+              <a
+                href={exportResult.manifestUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                下載格式說明
+              </a>
               <button onClick={() => setExportResult(null)}>
                 <X size={14} />
               </button>
@@ -836,6 +811,7 @@ function SessionTable({
             <th>目前節點</th>
             <th>狀態</th>
             <th>更新時間</th>
+            <th>RUN</th>
             <th />
           </tr>
         </thead>
@@ -861,6 +837,7 @@ function SessionTable({
                 </span>
               </td>
               <td>{formatTime(session.updatedAt)}</td>
+              <td>#{Number(session.restartIndex ?? 0) + 1}</td>
               <td>
                 <button onClick={() => onSelect(session)} aria-label="查看場次">
                   <ChevronRight size={17} />
@@ -990,7 +967,26 @@ function SessionDrawer({
             <span>NODE</span>
             <strong>Page {String(session.nodeId)}</strong>
           </div>
+          <div>
+            <span>RUN</span>
+            <strong>#{Number(session.restartIndex ?? 0) + 1}</strong>
+          </div>
         </div>
+        {Boolean(session.restartTrigger) && (
+          <div className="attempt-technical-error">
+            <b>
+              {session.status === "restarted"
+                ? "STUDY RESTARTED"
+                : `RESTART #${String(session.restartIndex ?? 1)}`}
+            </b>
+            <span>
+              {(() => {
+                const trigger = session.restartTrigger as Record<string, unknown>;
+                return `From Page ${String(trigger.nodeId)} · ${String(trigger.round).toUpperCase()} · Attempt ${String(trigger.attemptNumber)}`;
+              })()}
+            </span>
+          </div>
+        )}
         {loading ? (
           <div className="drawer-placeholder">
             <LoaderCircle className="spin" size={25} />

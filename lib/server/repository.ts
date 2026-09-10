@@ -9,12 +9,16 @@ import {
   resolveStudyThresholds,
 } from "@/lib/study/config";
 import { getOpeningMessages } from "@/lib/study/templates";
+import { createStudyRestart } from "@/lib/study/restart";
 import type {
+  AttemptCompletion,
   AttemptInput,
   AttemptResult,
   ExperimentGroup,
   NodeId,
   RoundType,
+  StudyRestart,
+  StudyRestartTrigger,
   StudySession,
 } from "@/lib/study/types";
 import type { Principal } from "./auth";
@@ -53,6 +57,17 @@ function toSession(id: string, data: FirebaseFirestore.DocumentData): StudySessi
     awaitingWorksheetNodeId: data.awaitingWorksheetNodeId
       ? (Number(data.awaitingWorksheetNodeId) as NodeId)
       : undefined,
+    rootSessionId: data.rootSessionId ? String(data.rootSessionId) : undefined,
+    restartIndex:
+      data.restartIndex === undefined ? undefined : Number(data.restartIndex),
+    restartedFromSessionId: data.restartedFromSessionId
+      ? String(data.restartedFromSessionId)
+      : undefined,
+    restartedAt: data.restartedAt ? String(data.restartedAt) : undefined,
+    restartedAsSessionId: data.restartedAsSessionId
+      ? String(data.restartedAsSessionId)
+      : undefined,
+    restartTrigger: data.restartTrigger as StudyRestartTrigger | undefined,
     configVersion: String(data.configVersion),
     vocabularyVersion: String(data.vocabularyVersion),
     thresholds: resolveStudyThresholds(data.thresholds),
@@ -130,7 +145,12 @@ export async function getOrCreateSession(
     | undefined;
   if (activeSessionId) {
     const existing = await db.collection("sessions").doc(activeSessionId).get();
-    if (existing.exists && existing.data()?.status !== "completed") {
+    if (
+      existing.exists &&
+      ["active", "awaiting_confirmation"].includes(
+        String(existing.data()?.status),
+      )
+    ) {
       return toSession(existing.id, existing.data()!);
     }
   }
@@ -147,6 +167,8 @@ export async function getOrCreateSession(
     round: "plot",
     attemptNumber: 1,
     status: "active",
+    rootSessionId: sessionRef.id,
+    restartIndex: 0,
     configVersion: activeConfig.configVersion,
     vocabularyVersion: activeConfig.vocabularyVersion,
     thresholds: activeConfig.thresholds,
@@ -161,16 +183,17 @@ export async function getOrCreateSession(
     { activeSessionId: session.id, lastActiveAt: startedAt },
     { merge: true },
   );
-  for (const message of getOpeningMessages()) {
+  getOpeningMessages().forEach((message, sequence) => {
     batch.set(sessionRef.collection("messages").doc(), {
       role: "olaf",
       text: message.text,
       templateId: message.id,
       nodeId: 1,
       round: "plot",
+      sequence,
       createdAt: startedAt,
     });
-  }
+  });
   await batch.commit();
   return session;
 }
@@ -264,6 +287,26 @@ export async function getSession(
   return toSession(snapshot.id, snapshot.data()!);
 }
 
+export async function getAttemptCompletion(
+  principal: Principal,
+  sessionId: string,
+  attempt: Record<string, unknown>,
+): Promise<AttemptCompletion> {
+  const restartedAsSessionId =
+    typeof attempt.restartedAsSessionId === "string"
+      ? attempt.restartedAsSessionId
+      : undefined;
+  const session = await getSession(
+    principal,
+    restartedAsSessionId ?? sessionId,
+  );
+  const restart =
+    attempt.restart && typeof attempt.restart === "object"
+      ? (attempt.restart as StudyRestart)
+      : undefined;
+  return { session, ...(restart ? { restart } : {}) };
+}
+
 export async function assertAudioUploaded(path: string): Promise<void> {
   if (!path.startsWith("audio/") || path.includes("..")) {
     throw new AuthError("The WAV path is invalid.", 400);
@@ -338,10 +381,12 @@ export async function finalizeAttempt(
   principal: Principal,
   input: AttemptInput,
   result: AttemptResult,
-): Promise<StudySession> {
+): Promise<AttemptCompletion> {
   const db = adminDb();
   const sessionRef = db.collection("sessions").doc(input.sessionId);
   const attemptRef = sessionRef.collection("attempts").doc(input.attemptId);
+  const nextSessionRef = db.collection("sessions").doc();
+  const restartRef = db.collection("studyRestarts").doc();
   const timestamp = now();
 
   return db.runTransaction(async (transaction) => {
@@ -364,14 +409,51 @@ export async function finalizeAttempt(
       (existingStatus === "technical_error" &&
         attemptSnap.data()?.technicalFailure?.retryable !== true)
     ) {
-      return toSession(sessionSnap.id, sessionSnap.data()!);
+      const existingAttempt = attemptSnap.data()!;
+      const restartedAsSessionId = existingAttempt.restartedAsSessionId;
+      if (
+        existingStatus === "forced_advance" &&
+        typeof restartedAsSessionId === "string"
+      ) {
+        const nextSessionSnap = await transaction.get(
+          db.collection("sessions").doc(restartedAsSessionId),
+        );
+        if (nextSessionSnap.exists) {
+          const restart =
+            existingAttempt.restart &&
+            typeof existingAttempt.restart === "object"
+              ? (existingAttempt.restart as StudyRestart)
+              : undefined;
+          return {
+            session: toSession(nextSessionSnap.id, nextSessionSnap.data()!),
+            ...(restart ? { restart } : {}),
+          };
+        }
+      }
+      return { session: toSession(sessionSnap.id, sessionSnap.data()!) };
     }
 
     const session = toSession(sessionSnap.id, sessionSnap.data()!);
     const sessionPatch: Record<string, unknown> = { updatedAt: timestamp };
     const { toneHint, ...persistedResult } = result;
 
-    if (result.status === "technical_error") {
+    const restartPlan = result.forcedAdvance
+      ? createStudyRestart(
+          session,
+          input,
+          { sessionId: nextSessionRef.id, restartId: restartRef.id },
+          timestamp,
+        )
+      : undefined;
+
+    if (restartPlan) {
+      Object.assign(sessionPatch, {
+        status: "restarted",
+        restartedAt: timestamp,
+        restartedAsSessionId: restartPlan.nextSession.id,
+        restartTrigger: restartPlan.restart.trigger,
+      });
+    } else if (result.status === "technical_error") {
       // Technical failures never advance or consume a student attempt.
     } else if (result.status === "failed") {
       sessionPatch.attemptNumber = session.attemptNumber + 1;
@@ -418,6 +500,13 @@ export async function finalizeAttempt(
         emotion: result.emotion,
         updatedAt: timestamp,
         completedAt: timestamp,
+        ...(restartPlan
+          ? {
+              restartId: restartPlan.restart.id,
+              restartedAsSessionId: restartPlan.nextSession.id,
+              restart: restartPlan.restart,
+            }
+          : {}),
       },
       { merge: true },
     );
@@ -428,6 +517,7 @@ export async function finalizeAttempt(
       nodeId: input.nodeId,
       round: input.round,
       attemptId: input.attemptId,
+      sequence: 0,
       createdAt: timestamp,
     });
     transaction.set(sessionRef.collection("messages").doc(), {
@@ -438,10 +528,42 @@ export async function finalizeAttempt(
       nodeId: input.nodeId,
       round: input.round,
       attemptId: input.attemptId,
+      sequence: 1,
       createdAt: timestamp,
     });
 
-    return toSession(session.id, { ...session, ...sessionPatch });
+    if (restartPlan) {
+      transaction.set(nextSessionRef, restartPlan.nextSession);
+      transaction.set(restartRef, restartPlan.restart);
+      transaction.set(
+        db.collection("participants").doc(principal.uid),
+        {
+          activeSessionId: restartPlan.nextSession.id,
+          lastActiveAt: timestamp,
+          lastRestartAt: timestamp,
+        },
+        { merge: true },
+      );
+      getOpeningMessages().forEach((message, sequence) => {
+        transaction.set(nextSessionRef.collection("messages").doc(), {
+          role: "olaf",
+          text: message.text,
+          templateId: message.id,
+          nodeId: 1,
+          round: "plot",
+          sequence,
+          createdAt: timestamp,
+        });
+      });
+      return {
+        session: restartPlan.nextSession,
+        restart: restartPlan.restart,
+      };
+    }
+
+    return {
+      session: toSession(session.id, { ...session, ...sessionPatch }),
+    };
   });
 }
 
@@ -565,7 +687,19 @@ export async function getSessionMessages(
     .collection("messages")
     .orderBy("createdAt", "asc")
     .get();
-  return messages.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  const rows: Array<Record<string, unknown>> = messages.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+  return rows
+    .sort((left, right) => {
+      const timeDifference = String(left.createdAt).localeCompare(
+        String(right.createdAt),
+      );
+      if (timeDifference !== 0) return timeDifference;
+      return Number(left.sequence ?? Number.MAX_SAFE_INTEGER) -
+        Number(right.sequence ?? Number.MAX_SAFE_INTEGER);
+    });
 }
 
 export async function getWorksheetEntries(

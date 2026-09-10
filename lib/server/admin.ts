@@ -3,12 +3,9 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
 import { participantEmail } from "@/lib/auth/participant";
+import { buildParticipantResearchExport } from "@/lib/study/research-export";
 import type { ExperimentGroup, NodeId } from "@/lib/study/types";
 import { HttpError } from "./http";
-import {
-  enqueueWavExport,
-  isWavExportJobConfigured,
-} from "./export-job";
 
 const now = () => new Date().toISOString();
 
@@ -183,6 +180,12 @@ export async function getAdminOverview() {
     }),
   );
   const completed = sessions.filter((session) => session.status === "completed");
+  const studyRoots = new Set(
+    sessions.map((session) => String(session.rootSessionId ?? session.id)),
+  );
+  const completedRoots = new Set(
+    completed.map((session) => String(session.rootSessionId ?? session.id)),
+  );
   const assigned = participants.filter(
     (participant) =>
       participant.group === "agent1" || participant.group === "agent2",
@@ -234,11 +237,12 @@ export async function getAdminOverview() {
   return {
     metrics: {
       participants: participants.length,
-      activeSessions: sessions.filter((session) => session.status !== "completed")
-        .length,
+      activeSessions: sessions.filter((session) =>
+        ["active", "awaiting_confirmation"].includes(String(session.status)),
+      ).length,
       completedSessions: completed.length,
-      completionRate: sessions.length
-        ? Math.round((completed.length / sessions.length) * 100)
+      completionRate: studyRoots.size
+        ? Math.round((completedRoots.size / studyRoots.size) * 100)
         : 0,
       attempts: attempts.length,
       estimatedAudioGb: Number(
@@ -306,125 +310,106 @@ export async function addResearchNote(
   return { id: noteRef.id, text, researcherId, createdAt };
 }
 
-function csvEscape(value: unknown): string {
-  const string = value === null || value === undefined ? "" : String(value);
-  return `"${string.replace(/"/g, '""')}"`;
-}
-
 export async function createResearchExport(researcherId: string) {
   const db = adminDb();
   const exportId = `export-${Date.now()}-${randomBytes(3).toString("hex")}`;
-  const [sessions, attempts] = await Promise.all([
+  const [
+    participants,
+    sessions,
+    attempts,
+    restarts,
+    messages,
+    worksheets,
+    researchNotes,
+  ] = await Promise.all([
+    db.collection("participants").where("role", "==", "student").get(),
     db.collection("sessions").get(),
     db.collectionGroup("attempts").get(),
+    db.collection("studyRestarts").get(),
+    db.collectionGroup("messages").get(),
+    db.collectionGroup("entries").get(),
+    db.collectionGroup("researchNotes").get(),
   ]);
-  const sessionRows = sessions.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-  const attemptRows = attempts.docs.map((doc) => ({
-    id: doc.id,
-    sessionId: doc.ref.parent.parent?.id,
-    ...doc.data(),
-  }));
-  const headers = [
-    "id",
-    "sessionId",
-    "participantCode",
-    "classId",
-    "group",
-    "nodeId",
-    "round",
-    "attemptNumber",
-    "status",
-    "decision",
-    "transcript",
-    "wordCount",
-    "storagePath",
-    "createdAt",
-  ];
-  const csv = [
-    headers.map(csvEscape).join(","),
-    ...attemptRows.map((row) =>
-      headers
-        .map((header) => csvEscape((row as Record<string, unknown>)[header]))
-        .join(","),
-    ),
-  ].join("\r\n");
-  const json = JSON.stringify(
+  const mapDocuments = (
+    snapshots: FirebaseFirestore.QuerySnapshot,
+  ): Array<Record<string, unknown> & { id: string }> =>
+    snapshots.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
+  const mapSessionDocuments = (
+    snapshots: FirebaseFirestore.QuerySnapshot,
+  ): Array<Record<string, unknown> & { id: string; sessionId: string }> =>
+    snapshots.docs.map((doc) => ({
+      ...doc.data(),
+      id: doc.id,
+      sessionId: doc.ref.parent.parent?.id ?? "",
+    }));
+  const exportedAt = now();
+  const artifacts = buildParticipantResearchExport(
     {
-      exportedAt: now(),
-      studyConfigVersion: "prototype-2026-07-v1",
-      sessions: sessionRows,
-      attempts: attemptRows,
+      participants: mapDocuments(participants),
+      sessions: mapDocuments(sessions),
+      attempts: mapSessionDocuments(attempts),
+      restarts: mapDocuments(restarts),
+      messages: mapSessionDocuments(messages),
+      worksheets: mapSessionDocuments(worksheets),
+      researchNotes: mapSessionDocuments(researchNotes),
     },
-    null,
-    2,
+    exportedAt,
   );
 
   const prefix = `exports/${exportId}`;
   await Promise.all([
-    adminBucket().file(`${prefix}/attempts.csv`).save(csv, {
+    adminBucket()
+      .file(`${prefix}/participant-records.jsonl`)
+      .save(artifacts.participantRecordsJsonl, {
+        contentType: "application/x-ndjson; charset=utf-8",
+        resumable: false,
+      }),
+    adminBucket()
+      .file(`${prefix}/participant-summary.csv`)
+      .save(artifacts.participantSummaryCsv, {
       contentType: "text/csv; charset=utf-8",
       resumable: false,
-    }),
-    adminBucket().file(`${prefix}/research-data.json`).save(json, {
+      }),
+    adminBucket().file(`${prefix}/manifest.json`).save(artifacts.manifestJson, {
       contentType: "application/json; charset=utf-8",
       resumable: false,
     }),
   ]);
-  const [csvUrl] = await adminBucket()
-    .file(`${prefix}/attempts.csv`)
+  const [recordsUrl] = await adminBucket()
+    .file(`${prefix}/participant-records.jsonl`)
     .getSignedUrl({ action: "read", expires: Date.now() + 5 * 60 * 1000 });
-  const [jsonUrl] = await adminBucket()
-    .file(`${prefix}/research-data.json`)
+  const [summaryUrl] = await adminBucket()
+    .file(`${prefix}/participant-summary.csv`)
+    .getSignedUrl({ action: "read", expires: Date.now() + 5 * 60 * 1000 });
+  const [manifestUrl] = await adminBucket()
+    .file(`${prefix}/manifest.json`)
     .getSignedUrl({ action: "read", expires: Date.now() + 5 * 60 * 1000 });
   await db.collection("exports").doc(exportId).set({
-    status: isWavExportJobConfigured() ? "creating_zip" : "data_ready",
+    status: "data_ready",
+    schemaVersion: "participant-research-export-v1",
     researcherId,
     prefix,
-    sessionCount: sessionRows.length,
-    attemptCount: attemptRows.length,
-    createdAt: now(),
+    participantCount: artifacts.participantCount,
+    sessionCount: artifacts.sessionCount,
+    attemptCount: artifacts.attemptCount,
+    restartCount: artifacts.restartCount,
+    audioIncluded: false,
+    createdAt: exportedAt,
   });
-
-  let wavZip: { status: "queued" | "not_configured"; operationName?: string } = {
-    status: "not_configured",
-  };
-  if (isWavExportJobConfigured()) {
-    try {
-      const operation = await enqueueWavExport(exportId, prefix);
-      wavZip = { status: "queued", operationName: operation.operationName };
-      await db.collection("exports").doc(exportId).set(
-        {
-          wavZipStatus: "queued",
-          cloudRunOperation: operation.operationName,
-          updatedAt: now(),
-        },
-        { merge: true },
-      );
-    } catch (error) {
-      await db.collection("exports").doc(exportId).set(
-        {
-          status: "data_ready",
-          wavZipStatus: "error",
-          wavZipError:
-            error instanceof Error ? error.message : "Cloud Run launch failed.",
-          updatedAt: now(),
-        },
-        { merge: true },
-      );
-      throw error;
-    }
-  }
   await db.collection("auditLogs").add({
     action: "export.created",
     researcherId,
     exportId,
-    createdAt: now(),
+    schemaVersion: "participant-research-export-v1",
+    audioIncluded: false,
+    createdAt: exportedAt,
   });
   return {
     exportId,
-    csvUrl,
-    jsonUrl,
-    wavZip,
+    recordsUrl,
+    summaryUrl,
+    manifestUrl,
+    participantCount: artifacts.participantCount,
     expiresInSeconds: 300,
   };
 }
@@ -439,15 +424,29 @@ export async function getResearchExport(exportId: string) {
   const response: Record<string, unknown> = {
     exportId,
     status: data.status,
-    wavZipStatus: data.wavZipStatus ?? "not_configured",
-    error: data.wavZipError ?? null,
+    schemaVersion: data.schemaVersion,
+    participantCount: data.participantCount,
+    audioIncluded: false,
   };
-  if (data.wavZipStatus === "ready" && typeof data.wavZipPath === "string") {
-    const [zipUrl] = await adminBucket()
-      .file(data.wavZipPath)
-      .getSignedUrl({ action: "read", expires: Date.now() + 5 * 60 * 1000 });
-    response.zipUrl = zipUrl;
-    response.expiresInSeconds = 300;
+  if (typeof data.prefix === "string") {
+    const expires = Date.now() + 5 * 60 * 1000;
+    const [[recordsUrl], [summaryUrl], [manifestUrl]] = await Promise.all([
+      adminBucket()
+        .file(`${data.prefix}/participant-records.jsonl`)
+        .getSignedUrl({ action: "read", expires }),
+      adminBucket()
+        .file(`${data.prefix}/participant-summary.csv`)
+        .getSignedUrl({ action: "read", expires }),
+      adminBucket()
+        .file(`${data.prefix}/manifest.json`)
+        .getSignedUrl({ action: "read", expires }),
+    ]);
+    Object.assign(response, {
+      recordsUrl,
+      summaryUrl,
+      manifestUrl,
+      expiresInSeconds: 300,
+    });
   }
   return response;
 }

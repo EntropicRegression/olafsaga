@@ -123,13 +123,46 @@ export interface StudySession {
   nodeId: NodeId;
   round: RoundType;
   attemptNumber: number;
-  status: "active" | "awaiting_confirmation" | "completed";
+  status: "active" | "awaiting_confirmation" | "completed" | "restarted";
   awaitingWorksheetNodeId?: NodeId;
+  rootSessionId?: string;
+  restartIndex?: number;
+  restartedFromSessionId?: string;
+  restartedAt?: string;
+  restartedAsSessionId?: string;
+  restartTrigger?: StudyRestartTrigger;
   configVersion: string;
   vocabularyVersion: string;
   thresholds: StudyThresholds;
   startedAt: string;
   updatedAt: string;
+}
+
+export interface StudyRestartTrigger {
+  attemptId: string;
+  nodeId: NodeId;
+  round: RoundType;
+  attemptNumber: number;
+  reason: "forced_advance";
+}
+
+export interface StudyRestart {
+  id: string;
+  participantId: string;
+  participantCode: string;
+  classId: string;
+  group: ExperimentGroup;
+  rootSessionId: string;
+  fromSessionId: string;
+  toSessionId: string;
+  restartIndex: number;
+  trigger: StudyRestartTrigger;
+  createdAt: string;
+}
+
+export interface AttemptCompletion {
+  session: StudySession;
+  restart?: StudyRestart;
 }
 
 export interface Participant {

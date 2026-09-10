@@ -15,7 +15,7 @@
 - IndexedDB 離線佇列，連同 WAV、逐字稿、評分與 `attemptId` 自動續傳。
 - Firestore 恢復節點、輪次、嘗試次數與日記確認狀態。
 - 研究後台：完成率、組別平衡、節點分數、失敗原因、逐輪檢視、私密 WAV、研究註記、帳號匯入與匯出。
-- CSV／JSON 五分鐘短效連結，以及由 Cloud Run Job 建立的大型 WAV ZIP。
+- 每位受試者一筆的 JSONL 完整紀錄、分組比較 CSV 與格式 manifest；包含逐字稿，不匯出音檔。
 - Firebase Security Rules、可變區塊 4／6 的 1:1 分派、不可變詞表版本與 audit log。
 
 ## 本機預覽
@@ -51,7 +51,7 @@ npm run build
 部署者的工具安裝及完整操作步驟，見 [部署執行與工具安裝手冊](docs/DEPLOYMENT.md)。先複製 `.env.example` 的所有值到 Vercel，再依序部署：
 
 1. Firebase Authentication、Firestore、Storage 與安全規則。
-2. Cloud Run emotion2vec service 和 WAV export job。
+2. Cloud Run emotion2vec service。
 3. Azure Speech 與 Azure OpenAI。
 4. Vercel production deployment。
 5. 建立第一個研究者，再從後台匯入受試者。

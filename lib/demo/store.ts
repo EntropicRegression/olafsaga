@@ -7,6 +7,7 @@ import {
   getNode,
 } from "@/lib/study/config";
 import { evaluateAttempt, makeDemoEmotionEvaluation } from "@/lib/study/evaluator";
+import { createStudyRestart } from "@/lib/study/restart";
 import {
   getCompletionReply,
   getOpeningMessages,
@@ -19,6 +20,7 @@ import type {
   ExperimentGroup,
   NodeId,
   StudySession,
+  StudyRestart,
   WorksheetEntry,
 } from "@/lib/study/types";
 
@@ -34,6 +36,7 @@ export interface DemoStudyState {
   messages: ChatMessage[];
   worksheet: WorksheetEntry[];
   attempts: DemoAttemptRecord[];
+  restarts: StudyRestart[];
 }
 
 function makeId(prefix: string) {
@@ -75,12 +78,15 @@ export function createDemoState(code: string): DemoStudyState {
     round: "plot",
     attemptNumber: 1,
     status: "active",
+    rootSessionId: "",
+    restartIndex: 0,
     configVersion: STUDY_CONFIG_VERSION,
     vocabularyVersion: VOCABULARY_VERSION,
     thresholds: STUDY_THRESHOLDS,
     startedAt: createdAt,
     updatedAt: createdAt,
   };
+  session.rootSessionId = session.id;
   return {
     participantCode: code,
     session,
@@ -94,6 +100,7 @@ export function createDemoState(code: string): DemoStudyState {
       status: "pending",
     })),
     attempts: [],
+    restarts: [],
   };
 }
 
@@ -182,6 +189,28 @@ export function submitDemoAttempt(
   };
 
   if (result.status === "technical_error") return next;
+  if (result.forcedAdvance) {
+    const restartPlan = createStudyRestart(
+      state.session,
+      attemptInput,
+      { sessionId: makeId("session"), restartId: makeId("restart") },
+      timestamp,
+    );
+    return {
+      ...next,
+      session: restartPlan.nextSession,
+      messages: getOpeningMessages().map((template) =>
+        messageFromTemplate(template, 1, "plot"),
+      ),
+      worksheet: [1, 2, 3, 4, 5].map((nodeId) => ({
+        nodeId: nodeId as NodeId,
+        storySummary: "",
+        emotionWord: "",
+        status: "pending" as const,
+      })),
+      restarts: [...(state.restarts ?? []), restartPlan.restart],
+    };
+  }
   if (result.status === "failed") {
     next.session.attemptNumber += 1;
     return next;

@@ -1,6 +1,6 @@
 # 雲端資源開通與交付規格
 
-> 本文件是交給 Firebase、Azure、Cloud Run emotion2vec 與 WAV ZIP 負責人的工作單。
+> 本文件是交給 Firebase、Azure 與 Cloud Run emotion2vec 負責人的工作單。WAV ZIP 匯出已停用；文件中相關段落僅供既有部署清理時參考。
 >
 > 文件讀者不是網站部署者。請依自己負責的章節建立資源，完成測試後，把「必須交付」欄位安全交給網站部署負責人。
 

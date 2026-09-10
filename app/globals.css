@@ -2215,6 +2215,11 @@ input:focus-visible {
   background: #e5f5fb;
 }
 
+.session-status.restarted {
+  color: #925f18;
+  background: #fff3d1;
+}
+
 .participant-workspace,
 .settings-workspace {
   display: grid;
