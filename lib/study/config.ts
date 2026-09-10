@@ -13,6 +13,26 @@ export const STUDY_THRESHOLDS: StudyThresholds = {
   maximumRecordingSeconds: 30,
 };
 
+export function resolveStudyThresholds(value: unknown): StudyThresholds {
+  const candidate =
+    value && typeof value === "object"
+      ? (value as Partial<Record<keyof StudyThresholds, unknown>>)
+      : {};
+  const numberOr = (key: keyof StudyThresholds) => {
+    const parsed = Number(candidate[key]);
+    return Number.isFinite(parsed) ? parsed : STUDY_THRESHOLDS[key];
+  };
+  return {
+    minimumWordCount: numberOr("minimumWordCount"),
+    accuracy: numberOr("accuracy"),
+    fluency: numberOr("fluency"),
+    emotionMinimumScore: numberOr("emotionMinimumScore"),
+    emotionMaximumRank: numberOr("emotionMaximumRank"),
+    maximumAttempts: numberOr("maximumAttempts"),
+    maximumRecordingSeconds: numberOr("maximumRecordingSeconds"),
+  };
+}
+
 export const STUDY_NODES: Record<NodeId, NodeConfig> = {
   1: {
     id: 1,

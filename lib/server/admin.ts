@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { adminAuth, adminBucket, adminDb } from "@/lib/firebase/admin";
 import { participantEmail } from "@/lib/auth/participant";
 import type { ExperimentGroup, NodeId } from "@/lib/study/types";
+import { HttpError } from "./http";
 import {
   enqueueWavExport,
   isWavExportJobConfigured,
@@ -19,12 +20,94 @@ export interface ParticipantImportRow {
   consentedAt: string;
 }
 
+function normalizeParticipantRow(row: ParticipantImportRow): ParticipantImportRow {
+  return {
+    code: row.code.trim().toUpperCase(),
+    password: row.password,
+    classId: row.classId.trim(),
+    consentVersion: row.consentVersion.trim(),
+    consentedAt: row.consentedAt,
+  };
+}
+
+export async function createParticipant(
+  rawRow: ParticipantImportRow,
+  researcherId: string,
+) {
+  const row = normalizeParticipantRow(rawRow);
+  const email = participantEmail(row.code);
+  const existingProfile = await adminDb()
+    .collection("participants")
+    .where("code", "==", row.code)
+    .limit(1)
+    .get();
+  if (!existingProfile.empty) {
+    throw new HttpError(
+      `受試者代碼 ${row.code} 已存在；為避免覆寫密碼與分組，未建立帳號。`,
+      409,
+    );
+  }
+  try {
+    await adminAuth().getUserByEmail(email);
+    throw new HttpError(
+      `受試者代碼 ${row.code} 已存在；為避免覆寫密碼與分組，未建立帳號。`,
+      409,
+    );
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    if ((error as { code?: string })?.code !== "auth/user-not-found") {
+      throw error;
+    }
+  }
+
+  const user = await adminAuth().createUser({
+    email,
+    password: row.password,
+    emailVerified: true,
+    displayName: row.code,
+  });
+  try {
+    const createdAt = now();
+    await adminDb().collection("participants").doc(user.uid).create({
+      code: row.code,
+      classId: row.classId,
+      role: "student",
+      group: null,
+      consentVersion: row.consentVersion,
+      consentedAt: row.consentedAt,
+      createdBy: researcherId,
+      createdAt,
+      updatedAt: createdAt,
+    });
+    await adminDb().collection("auditLogs").add({
+      action: "participant.created",
+      participantId: user.uid,
+      participantCode: row.code,
+      classId: row.classId,
+      researcherId,
+      createdAt,
+    });
+    return {
+      uid: user.uid,
+      code: row.code,
+      classId: row.classId,
+      consentVersion: row.consentVersion,
+      consentedAt: row.consentedAt,
+      group: null,
+    };
+  } catch (error) {
+    await adminAuth().deleteUser(user.uid).catch(() => undefined);
+    throw error;
+  }
+}
+
 export async function importParticipants(
   rows: ParticipantImportRow[],
   researcherId: string,
 ) {
   const results: Array<{ code: string; uid?: string; error?: string }> = [];
-  for (const row of rows) {
+  for (const rawRow of rows) {
+    const row = normalizeParticipantRow(rawRow);
     try {
       const email = participantEmail(row.code);
       let user;

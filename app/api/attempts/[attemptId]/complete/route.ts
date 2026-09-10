@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { evaluateAttempt } from "@/lib/study/evaluator";
+import { resolveStudyThresholds } from "@/lib/study/config";
 import type {
   AttemptInput,
   ExperimentGroup,
@@ -9,7 +10,7 @@ import type {
 import { requirePrincipal } from "@/lib/server/auth";
 import { evaluateSemanticWithProvider } from "@/lib/server/azure-openai";
 import { evaluateEmotionWithProvider } from "@/lib/server/emotion";
-import { apiError } from "@/lib/server/http";
+import { apiError, HttpError } from "@/lib/server/http";
 import {
   assertAudioUploaded,
   finalizeAttempt,
@@ -24,7 +25,7 @@ export const maxDuration = 60;
 const requestSchema = z.object({
   sessionId: z.string().min(1),
   transcript: z.string().max(4000).default(""),
-  durationMs: z.number().int().min(0).max(31_000).default(0),
+  durationMs: z.number().int().min(0).max(121_000).default(0),
   technicalError: z.string().min(1).max(1000).optional(),
   speechScores: z.object({
     accuracy: z.number().min(0).max(100).nullable(),
@@ -50,6 +51,13 @@ export async function POST(
     const body = requestSchema.parse(await request.json());
     const { attemptId } = await context.params;
     const attempt = await getAttempt(principal, body.sessionId, attemptId);
+    const thresholds = resolveStudyThresholds(attempt.thresholds);
+    if (body.durationMs > thresholds.maximumRecordingSeconds * 1000 + 1000) {
+      throw new HttpError(
+        `Recording exceeds the ${thresholds.maximumRecordingSeconds}-second study limit.`,
+        400,
+      );
+    }
     const terminal = [
       "passed",
       "failed",
@@ -81,7 +89,7 @@ export async function POST(
 
     if (body.technicalError) {
       await markAttemptAnalyzing(body.sessionId, attemptId, input);
-      const result = evaluateAttempt(input);
+      const result = evaluateAttempt(input, {}, thresholds);
       const session = await finalizeAttempt(principal, input, result);
       return Response.json({ result, session });
     }
@@ -100,9 +108,10 @@ export async function POST(
           ? await evaluateEmotionWithProvider(
               String(attempt.storagePath),
               input.nodeId,
+              thresholds,
             )
           : null;
-      const result = evaluateAttempt(input, { semantic, emotion });
+      const result = evaluateAttempt(input, { semantic, emotion }, thresholds);
       const session = await finalizeAttempt(principal, input, result);
       return Response.json({ result, session });
     } catch (providerError) {
@@ -113,7 +122,7 @@ export async function POST(
             ? providerError.message
             : "Provider analysis failed.",
       };
-      const result = evaluateAttempt(technicalInput);
+      const result = evaluateAttempt(technicalInput, {}, thresholds);
       const session = await finalizeAttempt(
         principal,
         technicalInput,
