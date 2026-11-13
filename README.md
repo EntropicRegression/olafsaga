@@ -8,7 +8,7 @@
 
 - iPad 直向／橫向皆可使用的純文字語音聊天與五頁冒險日記。
 - 單一 `MediaStream` 同時送到 Azure 即時 STT 與 `AudioWorklet`。
-- 16 kHz、16-bit、mono WAV；每段最長 30 秒、Storage 單檔上限 2 MB。
+- 16 kHz、16-bit、mono WAV；每段預設最長 30 秒（後台可設定至 120 秒）、Storage 單檔上限 4 MB。
 - `en-US`／`zh-TW` 候選語言、Accuracy、Fluency、Prosody、Monotone。
 - 完整判定順序、三次有效嘗試、技術錯誤不計次、第三次輔助前進。
 - Agent 1／Agent 2 隔離；Agent 1 不呼叫 emotion2vec。

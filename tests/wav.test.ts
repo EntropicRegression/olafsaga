@@ -34,3 +34,26 @@ describe("WAV encoder", () => {
     expect(view.getUint16(34, true)).toBe(16);
   });
 });
+
+describe("study WAV size limit", () => {
+  it("accepts the longest recording a researcher can configure", async () => {
+    const { MAX_STUDY_WAV_BYTES, wavByteLength } = await import("@/lib/audio/wav");
+    const { MAX_RECORDING_SECONDS } = await import("@/lib/study/config");
+    // The recorder stops within a second of the limit.
+    expect(wavByteLength(MAX_RECORDING_SECONDS + 1)).toBeLessThanOrEqual(
+      MAX_STUDY_WAV_BYTES,
+    );
+  });
+
+  it("matches the size limit in the Storage rules", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { MAX_STUDY_WAV_BYTES } = await import("@/lib/audio/wav");
+    const rules = readFileSync("storage.rules", "utf8");
+    const limit = rules.match(/request\.resource\.size <= ([\d\s*]+)/)?.[1];
+    expect(limit).toBeDefined();
+    const bytes = limit!
+      .split("*")
+      .reduce((product, factor) => product * Number(factor.trim()), 1);
+    expect(bytes).toBe(MAX_STUDY_WAV_BYTES);
+  });
+});

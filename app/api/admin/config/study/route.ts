@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { requireResearcher } from "@/lib/server/auth";
+import { MAX_RECORDING_SECONDS } from "@/lib/study/config";
 import { apiError } from "@/lib/server/http";
 import {
   getActiveStudyConfig,
@@ -15,7 +16,7 @@ const thresholdSchema = z.object({
   emotionMinimumScore: z.number().min(0).max(1),
   emotionMaximumRank: z.number().int().min(1).max(10),
   maximumAttempts: z.number().int().min(1).max(10),
-  maximumRecordingSeconds: z.number().int().min(5).max(120),
+  maximumRecordingSeconds: z.number().int().min(5).max(MAX_RECORDING_SECONDS),
 });
 
 const requestSchema = z.object({

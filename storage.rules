@@ -7,7 +7,8 @@ service firebase.storage {
                     && request.auth.uid == uid
                     && fileName.matches('^[A-Za-z0-9_-]+\\.wav$')
                     && request.resource.size > 44
-                    && request.resource.size <= 2 * 1024 * 1024
+                    // Keep in step with MAX_STUDY_WAV_BYTES in lib/audio/wav.ts.
+                    && request.resource.size <= 4 * 1024 * 1024
                     && request.resource.contentType == 'audio/wav';
       allow read, update, delete: if false;
     }

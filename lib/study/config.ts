@@ -13,6 +13,9 @@ export const STUDY_THRESHOLDS: StudyThresholds = {
   maximumRecordingSeconds: 30,
 };
 
+/** Upper bound a researcher may set for `maximumRecordingSeconds`. */
+export const MAX_RECORDING_SECONDS = 120;
+
 export function resolveStudyThresholds(value: unknown): StudyThresholds {
   const candidate =
     value && typeof value === "object"

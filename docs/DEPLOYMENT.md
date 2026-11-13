@@ -357,7 +357,7 @@ firebase deploy --only firestore,storage
 
 - 學生只能建立自己 UID 路徑下的 WAV。
 - 只接受 `audio/wav`。
-- 單檔不可超過 2 MB。
+- 單檔不可超過 4 MB。
 - 學生不能直接讀取研究資料。
 - 音檔播放與刪除只能經過研究後台伺服器。
 

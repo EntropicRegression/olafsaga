@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { evaluateAttempt } from "@/lib/study/evaluator";
-import { resolveStudyThresholds } from "@/lib/study/config";
+import {
+  MAX_RECORDING_SECONDS,
+  resolveStudyThresholds,
+} from "@/lib/study/config";
 import type {
   AttemptInput,
   ExperimentGroup,
@@ -32,7 +35,12 @@ export const maxDuration = 60;
 const requestSchema = z.object({
   sessionId: z.string().min(1),
   transcript: z.string().max(4000).default(""),
-  durationMs: z.number().int().min(0).max(121_000).default(0),
+  durationMs: z
+    .number()
+    .int()
+    .min(0)
+    .max((MAX_RECORDING_SECONDS + 1) * 1000)
+    .default(0),
   technicalError: z.string().min(1).max(1000).optional(),
   technicalErrorCode: z.enum(TECHNICAL_FAILURE_CODES).optional(),
   speechScores: z.object({
