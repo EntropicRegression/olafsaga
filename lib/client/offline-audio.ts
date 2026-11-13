@@ -11,6 +11,8 @@ export interface PendingAudio {
   blob: Blob;
   storagePath: string;
   metadata: Record<string, string>;
+  /** Set once the WAV is in Storage; a retry must not upload it again. */
+  uploaded?: boolean;
   analysis?: {
     transcript: string;
     durationMs: number;
