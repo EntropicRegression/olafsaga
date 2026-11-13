@@ -8,8 +8,15 @@ import {
   getNode,
   resolveStudyThresholds,
 } from "@/lib/study/config";
-import { getOpeningMessages, getPrompt } from "@/lib/study/templates";
+import {
+  getCompletionReply,
+  getOpeningMessages,
+  getPrompt,
+} from "@/lib/study/templates";
 import { createStudyRestart } from "@/lib/study/restart";
+import { staleAttemptReason } from "@/lib/study/attempt-position";
+import { mergeLineageRows } from "@/lib/study/lineage";
+import { MAX_STUDY_WAV_BYTES } from "@/lib/audio/wav";
 import type {
   AttemptCompletion,
   AttemptInput,
@@ -23,6 +30,7 @@ import type {
 } from "@/lib/study/types";
 import type { Principal } from "./auth";
 import { AuthError } from "./auth";
+import { HttpError } from "./http";
 import { getActiveStudyConfig } from "./study-config";
 import {
   normalizeTechnicalDetail,
@@ -197,80 +205,107 @@ export async function getOrCreateSession(
   }
   const group = enrollmentGroup ?? (await assignGroup(principal));
 
-  const participantSnap = await participantRef.get();
-  const activeSessionId = participantSnap.data()?.activeSessionId as
-    | string
-    | undefined;
-  if (activeSessionId) {
-    const existing = await db.collection("sessions").doc(activeSessionId).get();
-    if (
-      existing.exists &&
-      ["active", "awaiting_confirmation"].includes(
-        String(existing.data()?.status),
-      ) &&
-      (!experimentId || String(existing.data()?.experimentId ?? "") === experimentId)
-    ) {
-      return toSession(existing.id, existing.data()!);
-    }
-  }
-
   const sessionRef = db.collection("sessions").doc();
-  const startedAt = now();
-  const session: StudySession = {
-    id: sessionRef.id,
-    participantId: principal.uid,
-    participantCode: enrollmentCode,
-    ...(experimentId ? { experimentId } : {}),
-    ...(enrollmentId ? { enrollmentId } : {}),
-    group,
-    classId: enrollmentClassId,
-    nodeId: 1,
-    round: "plot",
-    attemptNumber: 1,
-    status: "active",
-    rootSessionId: sessionRef.id,
-    restartIndex: 0,
-    configVersion,
-    vocabularyVersion,
-    thresholds,
-    startedAt,
-    updatedAt: startedAt,
-  };
 
-  const batch = db.batch();
-  batch.set(sessionRef, withoutUndefinedProperties(session));
-  batch.set(
-    participantRef,
-    {
-      activeSessionId: session.id,
-      lastActiveAt: startedAt,
-      ...(experimentId ? { activeExperimentId: experimentId } : {}),
-      ...(enrollmentId ? { activeEnrollmentId: enrollmentId } : {}),
-    },
-    { merge: true },
-  );
-  if (experimentId && enrollmentId) {
-    batch.set(
-      db.collection("experiments").doc(experimentId).collection("enrollments").doc(enrollmentId),
-      { status: "started", startedAt, updatedAt: startedAt },
-      { merge: true },
-    );
-  }
-  getOpeningMessages().forEach((message, sequence) => {
-    batch.set(sessionRef.collection("messages").doc(), {
+  // Reading the participant inside the transaction makes concurrent requests
+  // (two tabs, a double page load) contend on that document, so only one of
+  // them creates a session and the others resume it.
+  return db.runTransaction(async (transaction) => {
+    const participantSnap = await transaction.get(participantRef);
+    const activeSessionId = participantSnap.data()?.activeSessionId as
+      | string
+      | undefined;
+    if (activeSessionId) {
+      const existing = await transaction.get(
+        db.collection("sessions").doc(activeSessionId),
+      );
+      if (
+        existing.exists &&
+        ["active", "awaiting_confirmation"].includes(
+          String(existing.data()?.status),
+        ) &&
+        (!experimentId ||
+          String(existing.data()?.experimentId ?? "") === experimentId)
+      ) {
+        return toSession(existing.id, existing.data()!);
+      }
+    }
+
+    if (!experimentId) {
+      // Completing the diary clears the participant's active enrollment, so a
+      // reload after the last page arrives here. Show the finished diary
+      // rather than starting a second, unscoped run.
+      const finished = await transaction.get(
+        db
+          .collection("sessions")
+          .where("participantId", "==", principal.uid)
+          .where("status", "==", "completed"),
+      );
+      const latest = finished.docs
+        .map((doc) => toSession(doc.id, doc.data()))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      if (latest) return latest;
+    }
+
+    const startedAt = now();
+    const session: StudySession = {
+      id: sessionRef.id,
+      participantId: principal.uid,
+      participantCode: enrollmentCode,
       ...(experimentId ? { experimentId } : {}),
       ...(enrollmentId ? { enrollmentId } : {}),
-      role: "olaf",
-      text: message.text,
-      templateId: message.id,
+      group,
+      classId: enrollmentClassId,
       nodeId: 1,
       round: "plot",
-      sequence,
-      createdAt: startedAt,
+      attemptNumber: 1,
+      status: "active",
+      rootSessionId: sessionRef.id,
+      restartIndex: 0,
+      configVersion,
+      vocabularyVersion,
+      thresholds,
+      startedAt,
+      updatedAt: startedAt,
+    };
+
+    transaction.set(sessionRef, withoutUndefinedProperties(session));
+    transaction.set(
+      participantRef,
+      {
+        activeSessionId: session.id,
+        lastActiveAt: startedAt,
+        ...(experimentId ? { activeExperimentId: experimentId } : {}),
+        ...(enrollmentId ? { activeEnrollmentId: enrollmentId } : {}),
+      },
+      { merge: true },
+    );
+    if (experimentId && enrollmentId) {
+      transaction.set(
+        db
+          .collection("experiments")
+          .doc(experimentId)
+          .collection("enrollments")
+          .doc(enrollmentId),
+        { status: "started", startedAt, updatedAt: startedAt },
+        { merge: true },
+      );
+    }
+    getOpeningMessages().forEach((message, sequence) => {
+      transaction.set(sessionRef.collection("messages").doc(), {
+        ...(experimentId ? { experimentId } : {}),
+        ...(enrollmentId ? { enrollmentId } : {}),
+        role: "olaf",
+        text: message.text,
+        templateId: message.id,
+        nodeId: 1,
+        round: "plot",
+        sequence,
+        createdAt: startedAt,
+      });
     });
+    return session;
   });
-  await batch.commit();
-  return session;
 }
 
 export interface CreatedAttempt {
@@ -381,13 +416,19 @@ export async function assertAudioUploaded(path: string): Promise<void> {
   }
   const file = adminBucket().file(path);
   const [exists] = await file.exists();
-  if (!exists) throw new AuthError("The WAV upload is not complete.", 409);
+  if (!exists) {
+    throw new HttpError(
+      "The WAV upload is not complete.",
+      409,
+      "UPLOAD_INCOMPLETE",
+    );
+  }
   const [metadata] = await file.getMetadata();
   const size = Number(metadata.size ?? 0);
   if (
     metadata.contentType !== "audio/wav" ||
     size <= 44 ||
-    size > 2 * 1024 * 1024
+    size > MAX_STUDY_WAV_BYTES
   ) {
     throw new AuthError("The uploaded file is not a valid study WAV.", 415);
   }
@@ -458,7 +499,9 @@ export async function finalizeAttempt(
   const restartRef = db.collection("studyRestarts").doc();
   const timestamp = now();
 
-  return db.runTransaction(async (transaction) => {
+  const outcome = await db.runTransaction<
+    AttemptCompletion | { stale: true }
+  >(async (transaction) => {
     const [sessionSnap, attemptSnap] = await Promise.all([
       transaction.get(sessionRef),
       transaction.get(attemptRef),
@@ -503,6 +546,24 @@ export async function finalizeAttempt(
     }
 
     const session = toSession(sessionSnap.id, sessionSnap.data()!);
+    const staleReason = staleAttemptReason(session, {
+      nodeId: Number(attemptSnap.data()?.nodeId),
+      round: String(attemptSnap.data()?.round),
+      attemptNumber: Number(attemptSnap.data()?.attemptNumber),
+    });
+    if (staleReason) {
+      // Keep the evidence, but never let it move the session.
+      transaction.set(
+        attemptRef,
+        {
+          supersededAt: timestamp,
+          supersededReason: staleReason,
+          updatedAt: timestamp,
+        },
+        { merge: true },
+      );
+      return { stale: true };
+    }
     const sessionPatch: Record<string, unknown> = { updatedAt: timestamp };
     const { toneHint, ...persistedResult } = result;
 
@@ -606,6 +667,23 @@ export async function finalizeAttempt(
       sequence: 1,
       createdAt: timestamp,
     });
+    if (!restartPlan && result.status === "passed" && input.round === "plot") {
+      // The next question is part of the conversation record: without it a
+      // reload shows the praise but not what the participant must answer.
+      const feelingPrompt = getPrompt(input.nodeId, "feeling");
+      transaction.set(sessionRef.collection("messages").doc(), {
+        ...(session.experimentId ? { experimentId: session.experimentId } : {}),
+        ...(session.enrollmentId ? { enrollmentId: session.enrollmentId } : {}),
+        role: "olaf",
+        text: feelingPrompt.text,
+        templateId: feelingPrompt.id,
+        ...(feelingPrompt.toneHint ? { toneHint: feelingPrompt.toneHint } : {}),
+        nodeId: input.nodeId,
+        round: "feeling",
+        sequence: 2,
+        createdAt: timestamp,
+      });
+    }
 
     if (restartPlan) {
       transaction.set(nextSessionRef, withoutUndefinedProperties(restartPlan.nextSession));
@@ -657,6 +735,15 @@ export async function finalizeAttempt(
       session: toSession(session.id, { ...session, ...sessionPatch }),
     };
   });
+
+  if ("stale" in outcome) {
+    throw new HttpError(
+      "This recording no longer matches the current diary step.",
+      409,
+      "ATTEMPT_STALE",
+    );
+  }
+  return outcome;
 }
 
 export async function confirmWorksheet(
@@ -699,6 +786,33 @@ export async function confirmWorksheet(
       awaitingWorksheetNodeId: FieldValue.delete(),
       updatedAt,
       ...(completed ? { completedAt: updatedAt } : {}),
+    });
+    const sessionData = sessionSnap.data()!;
+    const nextMessage = completed
+      ? {
+          template: getCompletionReply(sessionData.group as ExperimentGroup),
+          nodeId: 5 as NodeId,
+          round: "feeling" as RoundType,
+        }
+      : {
+          template: getPrompt(Number(sessionData.nodeId) as NodeId, "plot"),
+          nodeId: Number(sessionData.nodeId) as NodeId,
+          round: "plot" as RoundType,
+        };
+    transaction.set(sessionRef.collection("messages").doc(), {
+      ...(sessionData.experimentId
+        ? { experimentId: sessionData.experimentId }
+        : {}),
+      ...(sessionData.enrollmentId
+        ? { enrollmentId: sessionData.enrollmentId }
+        : {}),
+      role: "olaf",
+      text: nextMessage.template.text,
+      templateId: nextMessage.template.id,
+      nodeId: nextMessage.nodeId,
+      round: nextMessage.round,
+      sequence: 0,
+      createdAt: updatedAt,
     });
     if (completed) {
       transaction.set(
@@ -791,6 +905,7 @@ async function getSessionLineage(
   const lineage: SessionLineageEntry[] = [];
   const visited = new Set<string>();
   let currentId: string | undefined = sessionId;
+  let ownFinishedDiary = false;
 
   while (currentId) {
     if (visited.has(currentId) || lineage.length >= 50) {
@@ -804,7 +919,22 @@ async function getSessionLineage(
       .get();
     if (!snapshot.exists) throw new AuthError("Session was not found.", 404);
     const data: FirebaseFirestore.DocumentData = snapshot.data()!;
-    assertSessionAccess(principal, toSession(snapshot.id, data));
+    const session = toSession(snapshot.id, data);
+    if (lineage.length === 0) {
+      // Completion clears the participant's active enrollment, so the owner of
+      // a finished diary no longer matches its experiment. Reading that diary
+      // and the sessions it restarted from stays allowed; nothing here writes.
+      ownFinishedDiary =
+        session.status === "completed" &&
+        session.participantId === principal.uid;
+    }
+    if (ownFinishedDiary) {
+      if (session.participantId !== principal.uid) {
+        throw new AuthError("This session belongs to another participant.", 403);
+      }
+    } else {
+      assertSessionAccess(principal, session);
+    }
     lineage.unshift({ id: snapshot.id, data, ref: snapshot.ref });
     currentId =
       typeof data.restartedFromSessionId === "string"
@@ -813,13 +943,6 @@ async function getSessionLineage(
   }
 
   return lineage;
-}
-
-function restartedPage(entry: SessionLineageEntry): NodeId | undefined {
-  const trigger = entry.data.restartTrigger;
-  if (!trigger || typeof trigger !== "object") return undefined;
-  const nodeId = Number((trigger as { nodeId?: unknown }).nodeId);
-  return nodeId >= 1 && nodeId <= 5 ? (nodeId as NodeId) : undefined;
 }
 
 export async function getSessionMessages(
@@ -832,20 +955,12 @@ export async function getSessionMessages(
       entry.ref.collection("messages").orderBy("createdAt", "asc").get(),
     ),
   );
-  let rows: Array<Record<string, unknown>> = [];
-
-  snapshots.forEach((messages, index) => {
-    const restartNodeId = restartedPage(lineage[index]);
-    if (restartNodeId) {
-      rows = rows.filter((row) => Number(row.nodeId) < restartNodeId);
-    }
-    rows.push(
-      ...messages.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })),
-    );
-  });
+  const rows = mergeLineageRows<Record<string, unknown>>(
+    snapshots.map((messages, index) => ({
+      restartTrigger: lineage[index].data.restartTrigger,
+      rows: messages.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    })),
+  );
 
   return rows.sort((left, right) => {
     const timeDifference = String(left.createdAt).localeCompare(
@@ -876,19 +991,12 @@ export async function getWorksheetEntries(
     ),
   );
   const entries = new Map<NodeId, Record<string, unknown>>();
-
-  snapshots.forEach((snapshot, index) => {
-    const restartNodeId = restartedPage(lineage[index]);
-    if (restartNodeId) {
-      for (const nodeId of entries.keys()) {
-        if (nodeId >= restartNodeId) entries.delete(nodeId);
-      }
-    }
-    snapshot.docs.forEach((doc) => {
-      const row: Record<string, unknown> = { id: doc.id, ...doc.data() };
-      entries.set(Number(row.nodeId) as NodeId, row);
-    });
-  });
+  mergeLineageRows<Record<string, unknown>>(
+    snapshots.map((snapshot, index) => ({
+      restartTrigger: lineage[index].data.restartTrigger,
+      rows: snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+    })),
+  ).forEach((row) => entries.set(Number(row.nodeId) as NodeId, row));
 
   return [...entries.values()].sort(
     (left, right) => Number(left.nodeId) - Number(right.nodeId),
