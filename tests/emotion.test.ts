@@ -49,4 +49,31 @@ describe("emotion2vec provider adapter", () => {
     expect(result.scores[0]).toEqual({ label: "happy", score: 0.8 });
     expect(result.inferenceMs).toBe(123);
   });
+
+  it("matches the bilingual labels emotion2vec+ models return", async () => {
+    vi.stubEnv("EMOTION_SERVICE_URL", "https://emotion2vec-api.example.run.app");
+    vi.stubEnv("EMOTION_SERVICE_TOKEN", "test-token");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          scores: [
+            { label: "开心/happy", score: 0.7 },
+            { label: "中立/neutral", score: 0.2 },
+            { label: "<unk>", score: 0.1 },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    const result = await evaluateEmotionWithProvider("audio/test.wav", 5);
+
+    expect(result.targetRank).toBe(1);
+    expect(result.passed).toBe(true);
+    expect(result.scores.map((score) => score.label)).toEqual([
+      "happy",
+      "neutral",
+      "unknown",
+    ]);
+  });
 });
