@@ -23,7 +23,7 @@ try {
   if (-not $ready) { throw "Firebase emulators did not become ready within 60 seconds." }
   Push-Location $root
   try {
-    npm.cmd test -- --run tests/experiment-emulator.test.ts
+    npm.cmd test -- --run tests/experiment-emulator.test.ts tests/flow
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   } finally {
     Pop-Location

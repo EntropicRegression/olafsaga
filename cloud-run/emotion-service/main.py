@@ -41,6 +41,12 @@ def get_model() -> Any:
     return model
 
 
+def normalize_label(label: Any) -> str:
+    """Reduce emotion2vec+ labels such as "开心/happy" or "<unk>" to LABELS."""
+    english = str(label).split("/")[-1].strip().lower()
+    return "unknown" if english == "<unk>" else english
+
+
 def normalize_result(result: Any) -> list[dict[str, float | str]]:
     if isinstance(result, list):
         if not result:
@@ -57,7 +63,7 @@ def normalize_result(result: Any) -> list[dict[str, float | str]]:
         raw_scores = raw_scores[0]
 
     scores = [
-        {"label": str(label).lower(), "score": float(score)}
+        {"label": normalize_label(label), "score": float(score)}
         for label, score in zip(labels, raw_scores, strict=False)
     ]
     if len(scores) != 9:

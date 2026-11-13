@@ -15,6 +15,8 @@ flowchart LR
 
 WAV 不經過 Vercel Function。瀏覽器先取得嘗試與唯一 Storage 路徑，直接上傳成功後才呼叫分析 API；`attemptId` 是所有完成請求的冪等鍵。
 
+每筆嘗試只屬於建立當下的頁、輪與次數。完成請求在交易內比對場次目前位置；位置已改變或場次不是 `active` 時回覆 `409 ATTEMPT_STALE`，嘗試保留 `supersededAt`／`supersededReason` 供稽核，但不會推進場次。
+
 ## 學生狀態機
 
 每一節點依序執行情節輪與感受輪：
@@ -71,7 +73,7 @@ Agent 2 另外要求目標情緒在 emotion2vec 前二名且分數至少 0.30，
 - `studyConfigs`、`studyMetadata`：設定與不可變詞表版本。
 - `auditLogs`、`exports`：敏感操作及匯出狀態。
 
-瀏覽器對 Firestore 一律拒絕；Next.js 使用 Admin SDK 寫入。Storage 只允許登入學生建立自己的 `audio/{uid}/{sessionId}/*.wav`，並檢查 WAV MIME 與 2 MB 限制；讀取、覆寫、刪除均拒絕。
+瀏覽器對 Firestore 一律拒絕；Next.js 使用 Admin SDK 寫入。Storage 只允許登入學生建立自己的 `audio/{uid}/{sessionId}/*.wav`，並檢查 WAV MIME 與 4 MB 限制（可容納後台可設定的最長 120 秒錄音；數值與 `lib/audio/wav.ts` 的 `MAX_STUDY_WAV_BYTES` 一致，由測試把關）；讀取、覆寫、刪除均拒絕。
 
 ## 研究資料匯出
 
@@ -86,5 +88,9 @@ Agent 2 另外要求目標情緒在 emotion2vec 前二名且分數至少 0.30，
 ## 失敗與恢復
 
 停止錄音後先把完整待辦寫入 IndexedDB。只有 Storage 與完成 API 都成功，才刪除待辦並允許學生前進。重新整理或斷線後，學生頁會載入 Firestore 狀態，並每十秒以原 `attemptId` 重試 IndexedDB 工作。
+
+首次送出與佇列重試都走 `lib/client/pending-audio-sync.ts`：上傳成功後在待辦標記 `uploaded`，重試時不再上傳（Storage 禁止覆寫）；若 Storage 拒絕寫入，仍向伺服器請求完成，由伺服器判斷檔案是否已存在。只有傳輸類失敗會留在佇列；伺服器明確拒絕（4xx，例如 `ATTEMPT_STALE`、`UPLOAD_INCOMPLETE`）或分析失敗的待辦會移除，讓學生重新錄音。伺服器回覆 `idempotent` 時，學生頁改為重新載入 Firestore 狀態，不在畫面上重複附加訊息。
+
+提問訊息（感受輪提問、下一頁情節提問、完成訊息）與回覆一樣寫入 `sessions/{id}/messages`，重新整理後仍看得到目前的問題。完成日記後再次進入會回到同一個已完成場次，不會另開新場次。
 
 Azure Speech、Azure OpenAI 或 emotion2vec 失敗會形成 `technical_error`，保存錯誤但不增加有效嘗試次數。正式環境的日誌不得另行輸出逐字稿、提示、音檔 URL 或金鑰。

@@ -10,6 +10,8 @@ export class HttpError extends Error {
   constructor(
     message: string,
     public status = 400,
+    /** Stable machine-readable reason the browser can branch on. */
+    public code?: string,
   ) {
     super(message);
   }
@@ -33,7 +35,10 @@ export function apiError(error: unknown): Response {
     return Response.json({ error: error.message }, { status: error.status });
   }
   if (error instanceof HttpError) {
-    return Response.json({ error: error.message }, { status: error.status });
+    return Response.json(
+      { error: error.message, ...(error.code ? { code: error.code } : {}) },
+      { status: error.status },
+    );
   }
   if (error instanceof ZodError) {
     return Response.json(

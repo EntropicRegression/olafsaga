@@ -21,6 +21,16 @@ const responseSchema = z.object({
   inferenceMs: z.number().optional(),
 });
 
+/**
+ * emotion2vec+ models label their scores bilingually ("开心/happy") and
+ * name the unknown class "<unk>". Reduce both to the plain English label the
+ * study configuration uses, so the target emotion can be found.
+ */
+export function normalizeEmotionLabel(label: string): string {
+  const english = label.split("/").pop()!.trim().toLowerCase();
+  return english === "<unk>" ? "unknown" : english;
+}
+
 export function isEmotionServiceConfigured(): boolean {
   return Boolean(process.env.EMOTION_SERVICE_URL);
 }
@@ -101,7 +111,9 @@ export async function evaluateEmotionWithProvider(
       { cause: error },
     );
   }
-  const sorted = [...parsed.scores].sort((a, b) => b.score - a.score);
+  const sorted = parsed.scores
+    .map((score) => ({ ...score, label: normalizeEmotionLabel(score.label) }))
+    .sort((a, b) => b.score - a.score);
   const targetLabel = getNode(nodeId).emotionModelLabel;
   const targetIndex = sorted.findIndex((score) => score.label === targetLabel);
   const targetRank = targetIndex >= 0 ? targetIndex + 1 : null;

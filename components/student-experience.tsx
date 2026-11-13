@@ -28,16 +28,18 @@ import { Brand } from "./brand";
 import { ChatBubble } from "./chat-bubble";
 import { DiaryPanel } from "./diary-panel";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
-import { apiFetch } from "@/lib/client/api";
+import { apiFetch, ApiRequestError } from "@/lib/client/api";
 import {
   deletePendingAudio,
   listPendingAudio,
   savePendingAudio,
+  type PendingAudio,
 } from "@/lib/client/offline-audio";
 import {
   selectPendingAudioForRetry,
   shouldRetainPendingAudio,
 } from "@/lib/client/pending-audio-policy";
+import { syncPendingAudio } from "@/lib/client/pending-audio-sync";
 import {
   isFirebaseConfigured,
   signOutParticipant,
@@ -88,6 +90,14 @@ interface AttemptReservation {
   storagePath: string;
 }
 
+interface AttemptCompletionPayload {
+  result: AttemptResult;
+  session: StudySession;
+  restart?: StudyRestart;
+  /** The server had already committed this attempt before this request. */
+  idempotent?: boolean;
+}
+
 interface CapturedRecording {
   wav: Blob;
   transcript: string;
@@ -126,21 +136,57 @@ function microphoneFailureCode(error: unknown): TechnicalFailureCode {
     : "MICROPHONE_UNAVAILABLE";
 }
 
-async function uploadWavSafely(
-  path: string,
-  wav: Blob,
-  metadata: Record<string, string>,
-  onProgress: (fraction: number) => void,
-): Promise<void> {
-  try {
-    await uploadWav(path, wav, metadata, onProgress);
-  } catch (error) {
-    throw new TechnicalFailureError(
-      navigator.onLine ? "AUDIO_UPLOAD_FAILED" : "NETWORK_ERROR",
-      error instanceof Error ? error.message : "Firebase Storage upload failed.",
-      { cause: error },
-    );
+/** The session moved on (another tab or device) before this recording landed. */
+function isStaleAttempt(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.code === "ATTEMPT_STALE";
+}
+
+/** Text for a failed submission, in the order of how specific it is. */
+function submissionNotice(error: unknown, online: boolean): string {
+  if (isStaleAttempt(error)) {
+    return "日記進度已在其他地方更新，畫面已換成最新進度，請再錄一次。";
   }
+  const failure = failureFromError(
+    error,
+    online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
+  );
+  if (error instanceof TechnicalFailureError) return failure.userMessage;
+  return error instanceof Error ? error.message : failure.userMessage;
+}
+
+/**
+ * Records on the server that an attempt never produced a recording, so the
+ * reserved attempt is closed for audit and does not count against the student.
+ */
+async function reportAttemptTechnicalError(
+  attemptId: string,
+  sessionId: string,
+  error: unknown,
+  code: TechnicalFailureCode,
+): Promise<StudySession> {
+  const payload = await apiFetch<{ session: StudySession }>(
+    `/api/attempts/${attemptId}/complete`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId,
+        technicalError:
+          error instanceof Error && error.message
+            ? error.message.slice(0, 1000)
+            : "The recording could not be captured.",
+        technicalErrorCode: code,
+        transcript: "",
+        durationMs: 0,
+        speechScores: {
+          accuracy: null,
+          fluency: null,
+          prosody: null,
+          monotone: false,
+        },
+      }),
+    },
+  );
+  return payload.session;
 }
 
 export function StudentExperience() {
@@ -158,6 +204,7 @@ export function StudentExperience() {
     null,
   );
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -185,6 +232,42 @@ export function StudentExperience() {
 
   const formalSessionId = formalState?.session.id;
 
+  /** Loads the session, conversation and diary as the server stores them. */
+  const loadFormalState = useCallback(async () => {
+    const payload = await apiFetch<{
+      session: StudySession;
+      messages: ChatMessage[];
+      worksheet: WorksheetEntry[];
+    }>("/api/session", { method: "POST", body: "{}" });
+    setFormalState({
+      session: payload.session,
+      messages: payload.messages,
+      worksheet: ([1, 2, 3, 4, 5] as NodeId[]).map(
+        (nodeId) =>
+          payload.worksheet.find((entry) => entry.nodeId === nodeId) ?? {
+            nodeId,
+            storySummary: "",
+            emotionWord: "",
+            status: "pending" as const,
+          },
+      ),
+    });
+  }, []);
+
+  const openDiary = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
+    void loadFormalState()
+      .catch((error: unknown) =>
+        setLoadError(
+          error instanceof Error && error.message
+            ? error.message
+            : "無法打開冒險日記。",
+        ),
+      )
+      .finally(() => setLoading(false));
+  }, [loadFormalState]);
+
   useEffect(() => {
     const storedCode = sessionStorage.getItem("olaf-participant-code");
     if (!storedCode) {
@@ -202,35 +285,13 @@ export function StudentExperience() {
       setDemoState(loadDemoState(storedCode));
       setLoading(false);
     } else {
-      void apiFetch<{
-        session: StudySession;
-        messages: ChatMessage[];
-        worksheet: WorksheetEntry[];
-      }>("/api/session", { method: "POST", body: "{}" })
-        .then((payload) => {
-          const defaultWorksheet = ([1, 2, 3, 4, 5] as NodeId[]).map(
-            (nodeId) =>
-              payload.worksheet.find((entry) => entry.nodeId === nodeId) ?? {
-                nodeId,
-                storySummary: "",
-                emotionWord: "",
-                status: "pending" as const,
-              },
-          );
-          setFormalState({
-            session: payload.session,
-            messages: payload.messages,
-            worksheet: defaultWorksheet,
-          });
-        })
-        .catch((error) => setNotice(error.message))
-        .finally(() => setLoading(false));
+      openDiary();
     }
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [router]);
+  }, [openDiary, router]);
 
   useEffect(() => {
     scrollAnchor.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -274,29 +335,14 @@ export function StudentExperience() {
       const failure = failureFromError(error, microphoneFailureCode(error));
       if (!isDemoMode && nextReservation && session) {
         try {
-          const payload = await apiFetch<{
-            session: StudySession;
-          }>(`/api/attempts/${nextReservation.id}/complete`, {
-            method: "POST",
-            body: JSON.stringify({
-              sessionId: session.id,
-              technicalError:
-                error instanceof Error
-                  ? error.message
-                  : "Microphone could not be started.",
-              technicalErrorCode: failure.code,
-              transcript: "",
-              durationMs: 0,
-              speechScores: {
-                accuracy: null,
-                fluency: null,
-                prosody: null,
-                monotone: false,
-              },
-            }),
-          });
+          const nextSession = await reportAttemptTechnicalError(
+            nextReservation.id,
+            session.id,
+            error,
+            failure.code,
+          );
           setFormalState((current) =>
-            current ? { ...current, session: payload.session } : current,
+            current ? { ...current, session: nextSession } : current,
           );
         } catch {
           // The original microphone error remains the useful message. A
@@ -411,6 +457,54 @@ export function StudentExperience() {
     [],
   );
 
+  /** Uploads one recording (unless already uploaded) and completes it. */
+  const sendPendingAudio = useCallback(
+    (item: PendingAudio) =>
+      syncPendingAudio<AttemptCompletionPayload>(item, {
+        upload: (pending) =>
+          uploadWav(
+            pending.storagePath,
+            pending.blob,
+            pending.metadata,
+            setUploadProgress,
+          ),
+        markUploaded: (pending) =>
+          savePendingAudio({ ...pending, uploaded: true }),
+        complete: (pending) =>
+          apiFetch<AttemptCompletionPayload>(
+            `/api/attempts/${pending.id}/complete`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                sessionId: pending.metadata.sessionId,
+                ...pending.analysis,
+              }),
+            },
+          ),
+        isOnline: () => navigator.onLine,
+      }),
+    [],
+  );
+
+  const applyCompletion = useCallback(
+    async (captured: CapturedRecording, payload: AttemptCompletionPayload) => {
+      if (payload.idempotent) {
+        // The server committed this attempt on an earlier request whose
+        // answer never arrived. The conversation on screen may or may not
+        // include it already, so take the stored state instead of appending.
+        await loadFormalState();
+        return;
+      }
+      appendFormalResult(
+        captured,
+        payload.result,
+        payload.session,
+        payload.restart,
+      );
+    },
+    [appendFormalResult, loadFormalState],
+  );
+
   const submitCaptured = useCallback(
     async (
       captured: CapturedRecording,
@@ -427,19 +521,20 @@ export function StudentExperience() {
         round: session.round,
         attemptNumber: String(session.attemptNumber),
       };
+      const pending: PendingAudio = {
+        id: pendingId,
+        blob: captured.wav,
+        storagePath: reservation.storagePath,
+        metadata,
+        analysis: {
+          transcript: captured.transcript,
+          durationMs: captured.durationMs,
+          speechScores: captured.speechScores,
+        },
+        createdAt: new Date().toISOString(),
+      };
       try {
-        await savePendingAudio({
-          id: pendingId,
-          blob: captured.wav,
-          storagePath: reservation.storagePath,
-          metadata,
-          analysis: {
-            transcript: captured.transcript,
-            durationMs: captured.durationMs,
-            speechScores: captured.speechScores,
-          },
-          createdAt: new Date().toISOString(),
-        });
+        await savePendingAudio(pending);
         setPendingUploads((count) => count + 1);
         if (isDemoMode) {
           if (!demoState) return;
@@ -464,31 +559,7 @@ export function StudentExperience() {
           setPendingUploads((count) => Math.max(0, count - 1));
           setNotice("示範錄音與評量資料已保存在此瀏覽器。");
         } else {
-          await uploadWavSafely(
-            reservation.storagePath,
-            captured.wav,
-            metadata,
-            setUploadProgress,
-          );
-          const payload = await apiFetch<{
-            result: AttemptResult;
-            session: StudySession;
-            restart?: StudyRestart;
-          }>(`/api/attempts/${reservation.id}/complete`, {
-            method: "POST",
-            body: JSON.stringify({
-              sessionId: session.id,
-              transcript: captured.transcript,
-              durationMs: captured.durationMs,
-              speechScores: captured.speechScores,
-            }),
-          });
-          appendFormalResult(
-            captured,
-            payload.result,
-            payload.session,
-            payload.restart,
-          );
+          await applyCompletion(captured, await sendPendingAudio(pending));
           await deletePendingAudio(pendingId);
           setPendingUploads((count) => Math.max(0, count - 1));
         }
@@ -503,17 +574,8 @@ export function StudentExperience() {
             // visit can retry IndexedDB cleanup without blocking recording.
           }
         }
-        const failure = failureFromError(
-          error,
-          online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
-        );
-        setNotice(
-          error instanceof TechnicalFailureError
-            ? failure.userMessage
-            : error instanceof Error
-              ? error.message
-              : failure.userMessage,
-        );
+        setNotice(submissionNotice(error, online));
+        if (isStaleAttempt(error)) await loadFormalState().catch(() => undefined);
       } finally {
         foregroundPendingAudio.current.delete(pendingId);
         setProcessing(false);
@@ -522,11 +584,13 @@ export function StudentExperience() {
       }
     },
     [
-      appendFormalResult,
+      applyCompletion,
       demoState,
+      loadFormalState,
       online,
       persistDemo,
       reservation,
+      sendPendingAudio,
       session,
     ],
   );
@@ -561,34 +625,16 @@ export function StudentExperience() {
         for (const item of queued) {
           if (cancelled || !item.analysis) break;
           try {
-            await uploadWavSafely(
-              item.storagePath,
-              item.blob,
-              item.metadata,
-              setUploadProgress,
-            );
-            const payload = await apiFetch<{
-              result: AttemptResult;
-              session: StudySession;
-              restart?: StudyRestart;
-            }>(`/api/attempts/${item.id}/complete`, {
-              method: "POST",
-              body: JSON.stringify({
-                sessionId: item.metadata.sessionId,
-                ...item.analysis,
-              }),
-            });
+            const payload = await sendPendingAudio(item);
             if (cancelled) break;
-            appendFormalResult(
+            await applyCompletion(
               {
                 wav: item.blob,
                 transcript: item.analysis.transcript,
                 durationMs: item.analysis.durationMs,
                 speechScores: item.analysis.speechScores,
               },
-              payload.result,
-              payload.session,
-              payload.restart,
+              payload,
             );
             await deletePendingAudio(item.id);
             setPendingUploads((count) =>
@@ -597,12 +643,9 @@ export function StudentExperience() {
             if (payload.restart) break;
           } catch (error) {
             queueFailed = true;
-            const failure = failureFromError(
-              error,
-              online ? "ANALYSIS_FAILED" : "NETWORK_ERROR",
-            );
+            const failureNotice = submissionNotice(error, online);
             if (shouldRetainPendingAudio(error)) {
-              if (!cancelled) setNotice(`待同步：${failure.userMessage}`);
+              if (!cancelled) setNotice(`待同步：${failureNotice}`);
               break;
             }
 
@@ -614,7 +657,10 @@ export function StudentExperience() {
               // Keep this item suppressed during the current visit so an
               // IndexedDB cleanup failure cannot restart the analysis loop.
             }
-            if (!cancelled) setNotice(failure.userMessage);
+            if (!cancelled) setNotice(failureNotice);
+            if (isStaleAttempt(error)) {
+              await loadFormalState().catch(() => undefined);
+            }
           }
         }
         if (!cancelled && !queueFailed) {
@@ -645,7 +691,13 @@ export function StudentExperience() {
       cancelled = true;
       if (timer) clearInterval(timer);
     };
-  }, [appendFormalResult, formalSessionId, online]);
+  }, [
+    applyCompletion,
+    formalSessionId,
+    loadFormalState,
+    online,
+    sendPendingAudio,
+  ]);
 
   const stopRecording = useCallback(async () => {
     if (!recorder.isRecording || stopping.current) return;
@@ -654,13 +706,31 @@ export function StudentExperience() {
       const captured = await recorder.stop();
       await submitCaptured(captured);
     } catch (error) {
-      setNotice(
-        error instanceof Error ? error.message : "錄音停止失敗，請再試一次。",
-      );
+      // Nothing was captured, so the reserved attempt can never be completed.
+      // Close it as a technical error (it does not count) and free the
+      // microphone button for a new recording.
+      const failure = failureFromError(error, "MICROPHONE_UNAVAILABLE");
+      if (!isDemoMode && reservation && session) {
+        try {
+          const nextSession = await reportAttemptTechnicalError(
+            reservation.id,
+            session.id,
+            error,
+            failure.code,
+          );
+          setFormalState((current) =>
+            current ? { ...current, session: nextSession } : current,
+          );
+        } catch {
+          // The capture failure is the message the student needs to see.
+        }
+      }
+      setReservation(null);
+      setNotice(`${failure.userMessage} 請再錄一次。`);
     } finally {
       stopping.current = false;
     }
-  }, [recorder, submitCaptured]);
+  }, [recorder, reservation, session, submitCaptured]);
 
   useEffect(() => {
     if (recorder.isRecording && recorder.elapsedSeconds >= recordingLimit) {
@@ -843,7 +913,27 @@ export function StudentExperience() {
     return Math.round(((completed + roundPart) / 5) * 100);
   }, [session, worksheet]);
 
-  if (loading || !session) {
+  if (!loading && !session) {
+    return (
+      <main className="loading-page" role="alert">
+        <CloudOff size={28} />
+        <p>{loadError ?? "無法打開冒險日記。"}</p>
+        <p>請確認網路連線後再試一次；如果仍然無法進入，請通知研究人員。</p>
+        <div className="loading-page__actions">
+          <button className="reset-link" onClick={openDiary}>
+            <RotateCcw size={14} />
+            再試一次
+          </button>
+          <button className="reset-link" onClick={() => void leave()}>
+            <LogOut size={14} />
+            登出
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (!session) {
     return (
       <main className="loading-page">
         <LoaderCircle className="spin" size={28} />

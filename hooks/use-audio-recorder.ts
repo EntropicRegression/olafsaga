@@ -120,6 +120,13 @@ export function useAudioRecorder(
         },
       });
       const context = new AudioContext();
+      // Keep the stream and context reachable from the first await onward, so
+      // a failure anywhere below still releases the microphone.
+      stream.current = mediaStream;
+      audioContext.current = context;
+      // Safari starts a context suspended when it is created after an await;
+      // a suspended context delivers no frames and the WAV would be empty.
+      if (context.state === "suspended") await context.resume();
       await context.audioWorklet.addModule("/pcm-recorder-worklet.js");
       const mediaSource = context.createMediaStreamSource(mediaStream);
       const recorder = new AudioWorkletNode(context, "pcm-recorder");
@@ -132,8 +139,6 @@ export function useAudioRecorder(
       recorder.connect(gain);
       gain.connect(context.destination);
 
-      stream.current = mediaStream;
-      audioContext.current = context;
       source.current = mediaSource;
       worklet.current = recorder;
       silentGain.current = gain;
@@ -203,17 +208,38 @@ export function useAudioRecorder(
         monotone: false,
       },
     };
-    if (azure.current) {
-      try {
-        recognized = await azure.current.stop();
-      } finally {
+    let wav: Blob;
+    try {
+      if (azure.current) {
+        const recognition = azure.current;
         azure.current = null;
+        try {
+          recognized = await recognition.stop();
+        } catch (error) {
+          throw new TechnicalFailureError(
+            "SPEECH_SERVICE_UNAVAILABLE",
+            error instanceof Error
+              ? error.message
+              : "Azure Speech could not finish the recognition.",
+            { cause: error },
+          );
+        }
       }
+      const pcm = mergeFloat32Chunks(chunks.current);
+      if (pcm.length === 0) {
+        // Storage rejects a header-only WAV, which would leave the attempt in
+        // the retry queue forever. Ask for a new recording instead.
+        throw new TechnicalFailureError(
+          "MICROPHONE_UNAVAILABLE",
+          "The recording captured no audio frames.",
+        );
+      }
+      wav = encodeWav(resamplePcm(pcm, context.sampleRate, 16_000), 16_000);
+    } finally {
+      // Runs on every path: a failed stop must not leave the microphone on.
+      chunks.current = [];
+      await cleanAudioGraph();
     }
-    const pcm = mergeFloat32Chunks(chunks.current);
-    const resampled = resamplePcm(pcm, context.sampleRate, 16_000);
-    const wav = encodeWav(resampled, 16_000);
-    await cleanAudioGraph();
     return {
       wav,
       durationMs,

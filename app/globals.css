@@ -494,7 +494,28 @@ input:focus-visible {
 
 .loading-page p {
   margin: 0;
+  max-width: 34rem;
+  padding: 0 16px;
   color: var(--ink-soft);
+  font-size: 0.84rem;
+  text-align: center;
+}
+
+.loading-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.loading-page__actions .reset-link {
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 18px;
+  color: var(--blue-dark);
+  border: 1px solid currentColor;
+  border-radius: 999px;
   font-size: 0.84rem;
 }
 

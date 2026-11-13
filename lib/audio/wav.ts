@@ -1,3 +1,22 @@
+export const WAV_SAMPLE_RATE = 16_000;
+const WAV_HEADER_BYTES = 44;
+const WAV_BYTES_PER_SAMPLE = 2;
+
+/**
+ * Largest study WAV the server and Storage rules accept. It must hold the
+ * longest recording a researcher can configure (see MAX_RECORDING_SECONDS);
+ * `storage.rules` repeats this number and a test keeps the two in step.
+ */
+export const MAX_STUDY_WAV_BYTES = 4 * 1024 * 1024;
+
+/** Size of a mono 16-bit study WAV of the given length. */
+export function wavByteLength(seconds: number): number {
+  return (
+    WAV_HEADER_BYTES +
+    Math.ceil(seconds * WAV_SAMPLE_RATE) * WAV_BYTES_PER_SAMPLE
+  );
+}
+
 export function mergeFloat32Chunks(chunks: Float32Array[]): Float32Array {
   const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const output = new Float32Array(length);
